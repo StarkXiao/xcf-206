@@ -3,6 +3,7 @@ import { useGame } from '../context/GameContext';
 import { Student, PoolType, RecruitHistoryEntry, PityCounter, RecruitStats } from '../types/game';
 import { RARITY_COLORS, RARITY_NAMES, ELEMENT_COLORS, ELEMENT_NAMES, ELEMENT_ICONS, RECRUIT_POOL_DEFS, POOL_RARITY_WEIGHTS, CLASS_DEFS, CLASS_TIER_NAMES, CLASS_TIER_COLORS } from '../data/gameData';
 import { formatNumber, generateStudentForPool, generateStudentForPoolWithClass, updatePityCounter, getPoolRemainingTime, isPoolActive } from '../utils/gameUtils';
+import { ClassPromotionModal } from './ClassPromotionModal';
 
 interface RecruitResult {
   student: Student;
@@ -13,13 +14,14 @@ interface RecruitResult {
 type TabType = 'pools' | 'history' | 'stats';
 
 export function RecruitmentModule() {
-  const { state, dispatch, getStudentCapacity, canAfford, batchRecruitUpdate, getPoolEndTime, resetLimitedPool } = useGame();
+  const { state, dispatch, getStudentCapacity, canAfford, batchRecruitUpdate, getPoolEndTime, resetLimitedPool, getAvailablePromotions } = useGame();
   const [selectedPool, setSelectedPool] = useState<PoolType>('standard');
   const [recruitedResults, setRecruitedResults] = useState<RecruitResult[]>([]);
   const [showResults, setShowResults] = useState(false);
   const [isRecruiting, setIsRecruiting] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('pools');
   const [historyFilter, setHistoryFilter] = useState<PoolType | 'all'>('all');
+  const [promotionStudent, setPromotionStudent] = useState<Student | null>(null);
 
   const capacity = getStudentCapacity();
   const currentCount = state.students.length;
@@ -213,12 +215,22 @@ export function RecruitmentModule() {
               {student.fatigue}/{student.maxFatigue}
             </span>
           </div>
-          <button
-            onClick={() => handleDismiss(student.id)}
-            className="text-xs bg-red-900/50 hover:bg-red-800 text-red-400 px-2 py-0.5 rounded border border-red-700/50"
-          >
-            解雇
-          </button>
+          <div className="flex items-center gap-1">
+            {getAvailablePromotions(student.id).length > 0 && (
+              <button
+                onClick={() => setPromotionStudent(student)}
+                className="text-xs bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 text-white px-2 py-0.5 rounded border border-yellow-500/50 font-bold animate-pulse"
+              >
+                ✨ 转职
+              </button>
+            )}
+            <button
+              onClick={() => handleDismiss(student.id)}
+              className="text-xs bg-red-900/50 hover:bg-red-800 text-red-400 px-2 py-0.5 rounded border border-red-700/50"
+            >
+              解雇
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -728,6 +740,13 @@ export function RecruitmentModule() {
             </div>
           </div>
         </div>
+      )}
+
+      {promotionStudent && (
+        <ClassPromotionModal
+          student={promotionStudent}
+          onClose={() => setPromotionStudent(null)}
+        />
       )}
     </div>
   );

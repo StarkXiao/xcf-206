@@ -709,6 +709,24 @@ export function calculateStudentStats(
     }
   }
 
+  for (const mastery of student.masteries) {
+    for (const [stat, value] of Object.entries(mastery.bonuses)) {
+      if (stat in baseStats && value !== undefined) {
+        (baseStats as Record<string, number>)[stat] += value;
+      }
+    }
+  }
+
+  const classDef = CLASS_DEFS[student.class];
+  if (classDef && student.classLevel > 1) {
+    const levelBonus = student.classLevel - 1;
+    for (const [stat, value] of Object.entries(classDef.statGrowth)) {
+      if (stat in baseStats && value !== undefined) {
+        (baseStats as Record<string, number>)[stat] += value * levelBonus;
+      }
+    }
+  }
+
   baseStats.hp = Math.min(baseStats.hp, baseStats.maxHp);
 
   return baseStats;
