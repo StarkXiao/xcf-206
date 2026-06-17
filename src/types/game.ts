@@ -195,6 +195,9 @@ export interface GameState {
   totalVictories: number;
   achievements: string[];
   schedule: DailySchedule;
+  recruitHistory: RecruitHistoryEntry[];
+  recruitStats: RecruitStats;
+  pityCounters: PityCounter[];
 }
 
 export type ActivityType = 
@@ -229,7 +232,64 @@ export type FatigueLevel = 'energetic' | 'normal' | 'tired' | 'exhausted';
 
 export type TimeOfDay = 'dawn' | 'morning' | 'afternoon' | 'evening' | 'night';
 
-export type ModuleType = 
+export type PoolType = 'standard' | 'rate_up_epic' | 'rate_up_legendary';
+
+export interface PityConfig {
+  softPityStart: number;
+  hardPity: number;
+  guaranteedRarity: Rarity;
+}
+
+export interface RateUpConfig {
+  rarity: Rarity;
+  bonusMultiplier: number;
+  element?: ElementType;
+}
+
+export interface RecruitPoolDef {
+  id: PoolType;
+  name: string;
+  icon: string;
+  description: string;
+  cost: { gold: number; crystals: number };
+  tenCost: { gold: number; crystals: number };
+  pity: PityConfig;
+  rateUp?: RateUpConfig;
+  isLimited: boolean;
+  endTime?: number;
+}
+
+export interface RecruitHistoryEntry {
+  id: string;
+  poolId: PoolType;
+  studentId: string;
+  studentName: string;
+  rarity: Rarity;
+  element: ElementType;
+  avatar: string;
+  cost: { gold: number; crystals: number };
+  timestamp: number;
+  isPity: boolean;
+  isRateUp: boolean;
+}
+
+export interface RecruitStats {
+  totalPulls: number;
+  totalGold: number;
+  totalCrystals: number;
+  rarityCount: Record<Rarity, number>;
+  pityTriggered: number;
+  rateUpHits: number;
+}
+
+export interface PityCounter {
+  poolId: PoolType;
+  currentCount: number;
+  sinceLastEpic: number;
+  sinceLastLegendary: number;
+}
+
+export type ModuleType =
   | 'overview'
   | 'construction'
   | 'recruitment'

@@ -1,4 +1,4 @@
-import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType, TimeOfDay } from '../types/game';
+import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType, TimeOfDay, PoolType, PityCounter, RecruitHistoryEntry, RecruitStats } from '../types/game';
 import {
   RARITY_WEIGHTS,
   RARITY_MULTIPLIERS,
@@ -11,6 +11,8 @@ import {
   SKILLS,
   FATIGUE_CONFIG,
   TIME_CONFIG,
+  RECRUIT_POOL_DEFS,
+  POOL_RARITY_WEIGHTS,
 } from '../data/gameData';
 
 export function pickRandom<T>(arr: T[]): T {
@@ -486,4 +488,155 @@ export function isStudentBusy(
       e.startTime <= currentTime &&
       e.startTime + e.duration > currentTime
   );
+}
+
+const RARITY_ORDER: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+
+function rarityMeetsThreshold(rarity: Rarity, threshold: Rarity): boolean {
+  return RARITY_ORDER.indexOf(rarity) >= RARITY_ORDER.indexOf(threshold);
+}
+
+export function weightedRandomRarityForPool(poolId: PoolType, pityCounter: PityCounter): Rarity {
+  const poolDef = RECRUIT_POOL_DEFS[poolId];
+  const baseWeights = POOL_RARITY_WEIGHTS[poolId] || RARITY_WEIGHTS;
+  const pityConfig = poolDef.pity;
+  const currentCount = pityCounter.currentCount;
+
+  let weights = { ...baseWeights };
+
+  if (currentCount >= pityConfig.hardPity) {
+    return pityConfig.guaranteedRarity;
+  }
+
+  if (currentCount >= pityConfig.softPityStart) {
+    const overSoft = currentCount - pityConfig.softPityStart;
+    const range = pityConfig.hardPity - pityConfig.softPityStart;
+    const progress = overSoft / range;
+    const guaranteedIdx = RARITY_ORDER.indexOf(pityConfig.guaranteedRarity);
+    for (let i = guaranteedIdx; i < RARITY_ORDER.length; i++) {
+      const r = RARITY_ORDER[i];
+      weights[r] = Math.floor(weights[r] * (1 + progress * 10));
+    }
+  }
+
+  if (poolDef.rateUp) {
+    const ru = poolDef.rateUp;
+    weights[ru.rarity] = Math.floor(weights[ru.rarity] * ru.bonusMultiplier);
+  }
+
+  const total = Object.values(weights).reduce((a, b) => a + b, 0);
+  let rand = Math.random() * total;
+  for (const [rarity, weight] of Object.entries(weights) as [Rarity, number][]) {
+    rand -= weight;
+    if (rand <= 0) return rarity;
+  }
+  return 'common';
+}
+
+export function generateStudentForPool(poolId: PoolType, pityCounter: PityCounter): { student: Student; isPity: boolean; isRateUp: boolean } {
+  const poolDef = RECRUIT_POOL_DEFS[poolId];
+  const rarity = weightedRandomRarityForPool(poolId, pityCounter);
+  const isPity = pityCounter.currentCount >= poolDef.pity.softPityStart && rarityMeetsThreshold(rarity, poolDef.pity.guaranteedRarity);
+  const isRateUp = !!poolDef.rateUp && rarity === poolDef.rateUp.rarity;
+
+  let element = randomElement();
+  if (poolDef.rateUp?.element && isRateUp && Math.random() < 0.5) {
+    element = poolDef.rateUp.element;
+  }
+
+  const stats = generateStudentStats(rarity, element);
+  const skills: string[] = [];
+  const elementSkills = SKILLS.filter((s) => s.element === element);
+  if (elementSkills.length > 0) {
+    skills.push(pickRandom(elementSkills).name);
+  }
+  if (rarity === 'rare' || rarity === 'epic' || rarity === 'legendary') {
+    const otherSkills = SKILLS.filter((s) => !skills.includes(s.name));
+    if (otherSkills.length > 0) skills.push(pickRandom(otherSkills).name);
+  }
+  if (rarity === 'epic' || rarity === 'legendary') {
+    const moreSkills = SKILLS.filter((s) => !skills.includes(s.name));
+    if (moreSkills.length > 0) skills.push(pickRandom(moreSkills).name);
+  }
+  const maxFatigue = FATIGUE_CONFIG.BASE_MAX_FATIGUE + 1 * FATIGUE_CONFIG.LEVEL_BONUS;
+
+  const student: Student = {
+    id: generateId(),
+    name: generateStudentName(),
+    rarity,
+    level: 1,
+    exp: 0,
+    element,
+    stats,
+    skills,
+    avatar: pickRandom(AVATARS),
+    status: 'idle',
+    studyProgress: 0,
+    morale: 100,
+    fatigue: 0,
+    maxFatigue,
+  };
+
+  return { student, isPity, isRateUp };
+}
+
+export function updatePityCounter(counter: PityCounter, poolId: PoolType, obtainedRarity: Rarity): PityCounter {
+  const poolDef = RECRUIT_POOL_DEFS[poolId];
+  const newCounter = { ...counter, currentCount: counter.currentCount + 1 };
+
+  if (rarityMeetsThreshold(obtainedRarity, 'epic')) {
+    newCounter.sinceLastEpic = 0;
+  } else {
+    newCounter.sinceLastEpic += 1;
+  }
+
+  if (rarityMeetsThreshold(obtainedRarity, 'legendary')) {
+    newCounter.sinceLastLegendary = 0;
+  } else {
+    newCounter.sinceLastLegendary += 1;
+  }
+
+  if (rarityMeetsThreshold(obtainedRarity, poolDef.pity.guaranteedRarity)) {
+    newCounter.currentCount = 0;
+  }
+
+  return newCounter;
+}
+
+export function createInitialPityCounters(): PityCounter[] {
+  return (Object.keys(RECRUIT_POOL_DEFS) as PoolType[]).map((poolId) => ({
+    poolId,
+    currentCount: 0,
+    sinceLastEpic: 0,
+    sinceLastLegendary: 0,
+  }));
+}
+
+export function createInitialRecruitStats(): RecruitStats {
+  return {
+    totalPulls: 0,
+    totalGold: 0,
+    totalCrystals: 0,
+    rarityCount: { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
+    pityTriggered: 0,
+    rateUpHits: 0,
+  };
+}
+
+export function getPoolRemainingTime(endTime?: number): string {
+  if (!endTime) return '';
+  const remaining = endTime - Date.now();
+  if (remaining <= 0) return '已结束';
+  const days = Math.floor(remaining / (24 * 60 * 60 * 1000));
+  const hours = Math.floor((remaining % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+  if (days > 0) return `${days}天${hours}小时`;
+  const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
+  return `${hours}小时${minutes}分钟`;
+}
+
+export function isPoolActive(poolId: PoolType): boolean {
+  const poolDef = RECRUIT_POOL_DEFS[poolId];
+  if (!poolDef.isLimited) return true;
+  if (!poolDef.endTime) return true;
+  return Date.now() < poolDef.endTime;
 }

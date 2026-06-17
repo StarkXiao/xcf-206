@@ -1,4 +1,4 @@
-import { BuildingDef, CourseDef, DungeonDef, Rarity, ElementType, StudentStats } from '../types/game';
+import { BuildingDef, CourseDef, DungeonDef, Rarity, ElementType, StudentStats, RecruitPoolDef } from '../types/game';
 
 export const BUILDING_DEFS: Record<string, BuildingDef> = {
   main_hall: {
@@ -404,4 +404,47 @@ export const TIME_CONFIG = {
   MORNING_START: 360,
   EVENING_START: 1080,
   NIGHT_START: 1320,
+};
+
+export const RECRUIT_POOL_DEFS: Record<string, RecruitPoolDef> = {
+  standard: {
+    id: 'standard',
+    name: '常驻卡池',
+    icon: '🌀',
+    description: '标准招募池，概率稳定，保底90抽必出史诗+',
+    cost: { gold: 200, crystals: 0 },
+    tenCost: { gold: 1800, crystals: 1 },
+    pity: { softPityStart: 75, hardPity: 90, guaranteedRarity: 'epic' },
+    isLimited: false,
+  },
+  rate_up_epic: {
+    id: 'rate_up_epic',
+    name: '史诗UP池',
+    icon: '💜',
+    description: '限时概率UP！史诗出现率翻倍，保底60抽必出史诗',
+    cost: { gold: 200, crystals: 1 },
+    tenCost: { gold: 1800, crystals: 9 },
+    pity: { softPityStart: 50, hardPity: 60, guaranteedRarity: 'epic' },
+    rateUp: { rarity: 'epic', bonusMultiplier: 2.0, element: 'light' },
+    isLimited: true,
+    endTime: Date.now() + 7 * 24 * 60 * 60 * 1000,
+  },
+  rate_up_legendary: {
+    id: 'rate_up_legendary',
+    name: '传说UP池',
+    icon: '🌟',
+    description: '限时概率UP！传说出现率大幅提升，保底120抽必出传说',
+    cost: { gold: 0, crystals: 10 },
+    tenCost: { gold: 0, crystals: 90 },
+    pity: { softPityStart: 90, hardPity: 120, guaranteedRarity: 'legendary' },
+    rateUp: { rarity: 'legendary', bonusMultiplier: 3.0, element: 'dark' },
+    isLimited: true,
+    endTime: Date.now() + 3 * 24 * 60 * 60 * 1000,
+  },
+};
+
+export const POOL_RARITY_WEIGHTS: Record<string, Record<Rarity, number>> = {
+  standard: { common: 50, uncommon: 30, rare: 14, epic: 5, legendary: 1 },
+  rate_up_epic: { common: 40, uncommon: 25, rare: 18, epic: 14, legendary: 3 },
+  rate_up_legendary: { common: 40, uncommon: 25, rare: 18, epic: 10, legendary: 7 },
 };

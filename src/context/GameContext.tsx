@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react';
-import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus } from '../types/game';
+import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus, PoolType, RecruitHistoryEntry, RecruitStats, PityCounter, Rarity } from '../types/game';
 import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG, TIME_CONFIG } from '../data/gameData';
-import { levelUpStudent, generateId, getEfficiencyMultiplier, formatGameTime } from '../utils/gameUtils';
+import { levelUpStudent, generateId, getEfficiencyMultiplier, formatGameTime, createInitialPityCounters, createInitialRecruitStats, updatePityCounter } from '../utils/gameUtils';
 
 type GameAction =
   | { type: 'ADD_RESOURCES'; resources: Partial<Resources> }
@@ -30,7 +30,11 @@ type GameAction =
   | { type: 'TICK_TIME' }
   | { type: 'SET_SCHEDULE_AUTO_EXECUTE'; value: boolean }
   | { type: 'UPDATE_SCHEDULE_ENTRY_STATUS'; entryId: string; status: ScheduleStatus; result?: string }
-  | { type: 'ADVANCE_MINUTES'; minutes: number };
+  | { type: 'ADVANCE_MINUTES'; minutes: number }
+  | { type: 'ADD_RECRUIT_HISTORY'; entry: RecruitHistoryEntry }
+  | { type: 'UPDATE_RECRUIT_STATS'; stats: Partial<RecruitStats> }
+  | { type: 'UPDATE_PITY_COUNTER'; poolId: PoolType; counter: PityCounter }
+  | { type: 'BATCH_RECRUIT_UPDATE'; historyEntries: RecruitHistoryEntry[]; statsUpdate: Partial<RecruitStats>; pityUpdates: PityCounter[] };
 
 const STORAGE_KEY = 'magic_academy_save';
 
@@ -75,6 +79,9 @@ function createInitialState(): GameState {
       entries: [],
       autoExecute: true,
     },
+    recruitHistory: [],
+    recruitStats: createInitialRecruitStats(),
+    pityCounters: createInitialPityCounters(),
   };
 }
 
@@ -403,6 +410,38 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case 'ADD_RECRUIT_HISTORY': {
+      return {
+        ...state,
+        recruitHistory: [action.entry, ...state.recruitHistory].slice(0, 200),
+      };
+    }
+
+    case 'UPDATE_RECRUIT_STATS': {
+      return {
+        ...state,
+        recruitStats: { ...state.recruitStats, ...action.stats },
+      };
+    }
+
+    case 'UPDATE_PITY_COUNTER': {
+      return {
+        ...state,
+        pityCounters: state.pityCounters.map((c) =>
+          c.poolId === action.poolId ? action.counter : c
+        ),
+      };
+    }
+
+    case 'BATCH_RECRUIT_UPDATE': {
+      return {
+        ...state,
+        recruitHistory: [...action.historyEntries, ...state.recruitHistory].slice(0, 200),
+        recruitStats: { ...state.recruitStats, ...action.statsUpdate },
+        pityCounters: action.pityUpdates,
+      };
+    }
+
     default:
       return state;
   }
@@ -428,6 +467,10 @@ interface GameContextType {
   toggleAutoExecute: (value: boolean) => void;
   triggerNewDay: () => void;
   executeScheduledActivities: () => string[];
+  addRecruitHistory: (entries: RecruitHistoryEntry[]) => void;
+  updateRecruitStats: (update: Partial<RecruitStats>) => void;
+  updatePityCounters: (counters: PityCounter[]) => void;
+  batchRecruitUpdate: (historyEntries: RecruitHistoryEntry[], statsUpdate: Partial<RecruitStats>, pityUpdates: PityCounter[]) => void;
 }
 
 const GameContext = createContext<GameContextType | null>(null);
@@ -448,6 +491,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
         entries: [],
         autoExecute: true,
       },
+      recruitHistory: savedState.recruitHistory || [],
+      recruitStats: savedState.recruitStats || createInitialRecruitStats(),
+      pityCounters: savedState.pityCounters || createInitialPityCounters(),
     };
     if (migrated.schedule.autoExecute === undefined) {
       migrated.schedule.autoExecute = true;
@@ -885,6 +931,26 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }
   }, [state.settings.autoSave, state]);
 
+  const addRecruitHistory = (entries: RecruitHistoryEntry[]) => {
+    for (const entry of entries) {
+      dispatch({ type: 'ADD_RECRUIT_HISTORY', entry });
+    }
+  };
+
+  const updateRecruitStats = (update: Partial<RecruitStats>) => {
+    dispatch({ type: 'UPDATE_RECRUIT_STATS', stats: update });
+  };
+
+  const updatePityCounters = (counters: PityCounter[]) => {
+    for (const counter of counters) {
+      dispatch({ type: 'UPDATE_PITY_COUNTER', poolId: counter.poolId, counter });
+    }
+  };
+
+  const batchRecruitUpdate = (historyEntries: RecruitHistoryEntry[], statsUpdate: Partial<RecruitStats>, pityUpdates: PityCounter[]) => {
+    dispatch({ type: 'BATCH_RECRUIT_UPDATE', historyEntries, statsUpdate, pityUpdates });
+  };
+
   const contextValue: GameContextType = {
     state,
     dispatch,
@@ -905,6 +971,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
     toggleAutoExecute,
     triggerNewDay,
     executeScheduledActivities,
+    addRecruitHistory,
+    updateRecruitStats,
+    updatePityCounters,
+    batchRecruitUpdate,
   };
 
   return <GameContext.Provider value={contextValue}>{children}</GameContext.Provider>;
