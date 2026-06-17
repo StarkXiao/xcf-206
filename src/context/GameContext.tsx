@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react';
-import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType } from '../types/game';
-import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG } from '../data/gameData';
-import { levelUpStudent, generateId } from '../utils/gameUtils';
+import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus } from '../types/game';
+import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG, TIME_CONFIG } from '../data/gameData';
+import { levelUpStudent, generateId, getEfficiencyMultiplier, formatGameTime } from '../utils/gameUtils';
 
 type GameAction =
   | { type: 'ADD_RESOURCES'; resources: Partial<Resources> }
@@ -26,7 +26,11 @@ type GameAction =
   | { type: 'ADD_SCHEDULE_ENTRY'; entry: ScheduleEntry }
   | { type: 'REMOVE_SCHEDULE_ENTRY'; entryId: string }
   | { type: 'CLEAR_SCHEDULE' }
-  | { type: 'REST_STUDENT'; studentId: string; duration: number };
+  | { type: 'REST_STUDENT'; studentId: string; duration: number }
+  | { type: 'TICK_TIME' }
+  | { type: 'SET_SCHEDULE_AUTO_EXECUTE'; value: boolean }
+  | { type: 'UPDATE_SCHEDULE_ENTRY_STATUS'; entryId: string; status: ScheduleStatus; result?: string }
+  | { type: 'ADVANCE_MINUTES'; minutes: number };
 
 const STORAGE_KEY = 'magic_academy_save';
 
@@ -69,6 +73,7 @@ function createInitialState(): GameState {
     schedule: {
       day: 1,
       entries: [],
+      autoExecute: true,
     },
   };
 }
@@ -303,6 +308,101 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case 'TICK_TIME': {
+      const minutesPerTick = TIME_CONFIG.MINUTES_PER_TICK;
+      let newTime = state.time + minutesPerTick;
+      let newDay = state.day;
+      
+      if (newTime >= TIME_CONFIG.MINUTES_PER_DAY) {
+        newTime = newTime % TIME_CONFIG.MINUTES_PER_DAY;
+        newDay += 1;
+      }
+
+      return {
+        ...state,
+        time: newTime,
+        day: newDay,
+      };
+    }
+
+    case 'ADVANCE_MINUTES': {
+      let newTime = state.time + action.minutes;
+      let newDay = state.day;
+      
+      if (newTime >= TIME_CONFIG.MINUTES_PER_DAY) {
+        newDay += Math.floor(newTime / TIME_CONFIG.MINUTES_PER_DAY);
+        newTime = newTime % TIME_CONFIG.MINUTES_PER_DAY;
+      }
+
+      return {
+        ...state,
+        time: newTime,
+        day: newDay,
+      };
+    }
+
+    case 'SET_SCHEDULE_AUTO_EXECUTE': {
+      return {
+        ...state,
+        schedule: {
+          ...state.schedule,
+          autoExecute: action.value,
+        },
+      };
+    }
+
+    case 'UPDATE_SCHEDULE_ENTRY_STATUS': {
+      return {
+        ...state,
+        schedule: {
+          ...state.schedule,
+          entries: state.schedule.entries.map((e) =>
+            e.id === action.entryId
+              ? { ...e, status: action.status, result: action.result, executedAt: state.time }
+              : e
+          ),
+        },
+      };
+    }
+
+    case 'NEW_DAY': {
+      const dorm = state.buildings.find((b) => b.type === 'dormitory');
+      const dormLevel = dorm?.level || 0;
+      const fatigueRecovery = FATIGUE_CONFIG.DAILY_RECOVERY_BASE + dormLevel * FATIGUE_CONFIG.DORM_BONUS_PER_LEVEL;
+
+      const updatedStudents = state.students.map((s) => {
+        let newFatigue = Math.max(0, s.fatigue - fatigueRecovery);
+        let newMorale = Math.min(100, s.morale + 10);
+        let newStatus: Student['status'] = 'idle';
+        let newHp = Math.min(s.stats.maxHp, s.stats.hp + Math.floor(s.stats.maxHp * 0.3));
+        return {
+          ...s,
+          fatigue: newFatigue,
+          morale: newMorale,
+          status: newStatus,
+          stats: { ...s.stats, hp: newHp },
+          currentCourseId: undefined,
+          studyProgress: 0,
+        };
+      });
+
+      const scheduledEntries = state.schedule.entries
+        .filter((e) => e.status !== 'completed')
+        .map((e) => ({ ...e, status: 'pending' as ScheduleStatus, executedAt: undefined }));
+
+      return {
+        ...state,
+        day: state.day + 1,
+        time: 0,
+        students: updatedStudents,
+        schedule: {
+          ...state.schedule,
+          day: state.day + 1,
+          entries: scheduledEntries,
+        },
+      };
+    }
+
     default:
       return state;
   }
@@ -319,11 +419,15 @@ interface GameContextType {
   getFatigueLevel: (fatigue: number, maxFatigue: number) => 'energetic' | 'normal' | 'tired' | 'exhausted';
   getEfficiencyMultiplier: (fatigue: number, maxFatigue: number, morale: number) => number;
   updateStudentFatigue: (studentId: string, delta: number) => void;
-  addScheduleEntry: (entry: Omit<ScheduleEntry, 'id'>) => void;
+  addScheduleEntry: (entry: Omit<ScheduleEntry, 'id' | 'status'>) => void;
   removeScheduleEntry: (entryId: string) => void;
   clearSchedule: () => void;
   restStudent: (studentId: string, duration: number) => void;
   migrateSaveData: (savedState: any) => GameState;
+  advanceMinutes: (minutes: number) => void;
+  toggleAutoExecute: (value: boolean) => void;
+  triggerNewDay: () => void;
+  executeScheduledActivities: () => string[];
 }
 
 const GameContext = createContext<GameContextType | null>(null);
@@ -342,8 +446,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
       schedule: savedState.schedule || {
         day: savedState.day || 1,
         entries: [],
+        autoExecute: true,
       },
     };
+    if (migrated.schedule.autoExecute === undefined) {
+      migrated.schedule.autoExecute = true;
+    }
     return migrated;
   };
 
@@ -462,36 +570,285 @@ export function GameProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'REST_STUDENT', studentId, duration });
   };
 
+  const advanceMinutes = (minutes: number) => {
+    dispatch({ type: 'ADVANCE_MINUTES', minutes });
+  };
+
+  const toggleAutoExecute = (value: boolean) => {
+    dispatch({ type: 'SET_SCHEDULE_AUTO_EXECUTE', value });
+  };
+
+  const triggerNewDay = () => {
+    dispatch({ type: 'NEW_DAY' });
+  };
+
+  const executeScheduleStudy = (entry: ScheduleEntry): string => {
+    const currentState = stateRef.current;
+    const student = currentState.students.find((s) => s.id === entry.studentId);
+    if (!student) return '学员不存在';
+    if (student.status === 'studying' || student.status === 'dungeon') return '学员忙碌中';
+
+    const courseType = entry.courseType || 'basic_magic';
+    const def = COURSE_DEFS[courseType];
+    if (!def) return '课程不存在';
+
+    const fatigueCost = Math.floor(def.duration * FATIGUE_CONFIG.STUDY_COST_PER_MINUTE / 60);
+    if (student.fatigue + fatigueCost > student.maxFatigue) {
+      return '疲劳度过高';
+    }
+
+    const newCourse: Course = {
+      id: generateId(),
+      courseType,
+      studentIds: [student.id],
+      progress: 0,
+      duration: def.duration,
+      startTime: currentState.time,
+    };
+    dispatch({ type: 'ADD_COURSE', course: newCourse });
+    dispatch({
+      type: 'UPDATE_STUDENT',
+      student: { ...student, status: 'studying', currentCourseId: newCourse.id, studyProgress: 0 },
+    });
+    return `开始学习: ${def.name}`;
+  };
+
+  const executeScheduleTrain = (entry: ScheduleEntry): string => {
+    const currentState = stateRef.current;
+    const student = currentState.students.find((s) => s.id === entry.studentId);
+    if (!student) return '学员不存在';
+    if (student.status === 'studying' || student.status === 'dungeon') return '学员忙碌中';
+
+    const efficiencyMult = getEfficiencyMultiplier(student.fatigue, student.maxFatigue, student.morale);
+    const duration = entry.duration;
+    const fatigueCost = Math.floor(duration * FATIGUE_CONFIG.STUDY_COST_PER_MINUTE * 1.5 / 60);
+    const trainBonus = Math.floor(duration / 30 * efficiencyMult);
+
+    if (student.fatigue + fatigueCost > student.maxFatigue) {
+      return '疲劳度过高';
+    }
+
+    const newStats = { ...student.stats };
+    newStats.attack += trainBonus;
+    newStats.defense += Math.floor(trainBonus * 0.7);
+    newStats.maxHp += Math.floor(trainBonus * 2);
+    newStats.hp = Math.min(newStats.maxHp, newStats.hp + Math.floor(trainBonus * 2));
+
+    dispatch({
+      type: 'UPDATE_STUDENT',
+      student: {
+        ...student,
+        stats: newStats,
+        status: 'training',
+        fatigue: Math.min(student.maxFatigue, student.fatigue + fatigueCost),
+        morale: Math.max(0, student.morale - 3),
+      },
+    });
+    dispatch({ type: 'UPDATE_ACADEMY_EXP', exp: Math.floor(trainBonus * 3) });
+    return `训练完成: 攻击+${trainBonus}, 防御+${Math.floor(trainBonus * 0.7)}, HP+${Math.floor(trainBonus * 2)}`;
+  };
+
+  const executeScheduleRest = (entry: ScheduleEntry): string => {
+    const currentState = stateRef.current;
+    const student = currentState.students.find((s) => s.id === entry.studentId);
+    if (!student) return '学员不存在';
+
+    const duration = entry.duration;
+    const recovery = Math.floor(FATIGUE_CONFIG.REST_RECOVERY_PER_MINUTE * duration);
+    const hpRecovery = Math.floor(student.stats.maxHp * duration / 720);
+    const moraleBonus = Math.floor(duration / 60 * 2);
+
+    const newStats = { ...student.stats };
+    newStats.hp = Math.min(newStats.maxHp, newStats.hp + hpRecovery);
+
+    dispatch({
+      type: 'UPDATE_STUDENT',
+      student: {
+        ...student,
+        status: 'resting',
+        fatigue: Math.max(0, student.fatigue - recovery),
+        morale: Math.min(100, student.morale + moraleBonus),
+        stats: newStats,
+      },
+    });
+    return `休息完成: 恢复疲劳${recovery}, HP+${hpRecovery}, 士气+${moraleBonus}`;
+  };
+
+  const executeScheduleDungeon = (entry: ScheduleEntry): string => {
+    const currentState = stateRef.current;
+    const student = currentState.students.find((s) => s.id === entry.studentId);
+    if (!student) return '学员不存在';
+    if (student.status === 'studying' || student.status === 'dungeon') return '学员忙碌中';
+
+    const difficulty = 'easy';
+    const fatigueCost = FATIGUE_CONFIG.DUNGEON_COST_BASE + 
+      FATIGUE_CONFIG.DUNGEON_COST_PER_DIFFICULTY[difficulty];
+    if (student.fatigue + fatigueCost > student.maxFatigue) {
+      return '疲劳度过高';
+    }
+    if (student.stats.hp < student.stats.maxHp * 0.3) {
+      return '生命值过低';
+    }
+
+    const enemyPower = 50 + 20 * currentState.academyLevel;
+    const studentPower = (student.stats.attack + student.stats.defense + student.stats.magic) * (student.level * 0.5 + 1);
+    const winRate = Math.min(0.9, Math.max(0.2, studentPower / (enemyPower + studentPower)));
+    const victory = Math.random() < winRate;
+
+    const goldReward = victory ? Math.floor(50 + 30 * currentState.academyLevel) : 10;
+    const manaReward = victory ? Math.floor(20 + 10 * currentState.academyLevel) : 5;
+    const expReward = victory ? Math.floor(30 + 15 * (student.level)) : 5;
+
+    const newHp = Math.max(1, student.stats.hp - Math.floor((victory ? 0.1 : 0.3) * student.stats.maxHp));
+
+    dispatch({ type: 'ADD_RESOURCES', resources: { gold: goldReward, mana: manaReward } });
+    dispatch({
+      type: 'UPDATE_STUDENT',
+      student: {
+        ...student,
+        status: 'idle',
+        exp: student.exp + expReward,
+        stats: { ...student.stats, hp: newHp },
+        fatigue: Math.min(student.maxFatigue, student.fatigue + fatigueCost),
+        morale: victory ? Math.min(100, student.morale + 3) : Math.max(0, student.morale - 5),
+      },
+    });
+    dispatch({ type: 'INCREMENT_DUNGEON_RUNS', victory });
+    dispatch({ type: 'UPDATE_ACADEMY_EXP', exp: Math.floor((goldReward + manaReward) / 10) });
+    return victory ? `副本胜利! 获得 💰${goldReward} 🔮${manaReward} EXP+${expReward}` :
+                    `副本失败, 获得 💰${goldReward} 🔮${manaReward} EXP+${expReward}`;
+  };
+
+  const executeScheduledActivities = (): string[] => {
+    const currentState = stateRef.current;
+    if (!currentState.schedule.autoExecute) return [];
+    
+    const currentTime = currentState.time;
+    const results: string[] = [];
+    const completedEntries: Array<{ id: string; result: string }> = [];
+
+    for (const entry of currentState.schedule.entries) {
+      if (entry.status === 'completed' || entry.status === 'skipped') continue;
+
+      const entryEndTime = entry.startTime + entry.duration;
+      if (entryEndTime <= currentTime && (!entry.status || entry.status === 'pending')) {
+        continue;
+      }
+
+      if (entry.startTime <= currentTime && (!entry.status || entry.status === 'pending')) {
+        let result = '';
+        switch (entry.activity) {
+          case 'study':
+            result = executeScheduleStudy(entry);
+            break;
+          case 'train':
+            result = executeScheduleTrain(entry);
+            completedEntries.push({ id: entry.id, result });
+            break;
+          case 'rest':
+            result = executeScheduleRest(entry);
+            completedEntries.push({ id: entry.id, result });
+            break;
+          case 'dungeon':
+            result = executeScheduleDungeon(entry);
+            completedEntries.push({ id: entry.id, result });
+            break;
+          default:
+            result = '空闲';
+            completedEntries.push({ id: entry.id, result });
+        }
+        const student = currentState.students.find((s) => s.id === entry.studentId);
+        if (result) {
+          results.push(`${student?.name || '?'} @ ${formatGameTime(entry.startTime)}: ${result}`);
+        }
+      }
+
+      if (entry.status === 'active' && entry.startTime + entry.duration <= currentTime) {
+        const student = currentState.students.find((s) => s.id === entry.studentId);
+        if (student && (student.status === 'studying' || student.status === 'training' || student.status === 'resting')) {
+          dispatch({
+            type: 'UPDATE_STUDENT',
+            student: { ...student, status: 'idle', currentCourseId: undefined, studyProgress: 0 },
+          });
+        }
+        completedEntries.push({ id: entry.id, result: entry.result || '完成' });
+      }
+    }
+
+    for (const { id, result } of completedEntries) {
+      dispatch({ type: 'UPDATE_SCHEDULE_ENTRY_STATUS', entryId: id, status: 'completed', result });
+    }
+
+    return results;
+  };
+
+  const expireMissedSchedules = () => {
+    const currentState = stateRef.current;
+    const currentTime = currentState.time;
+    
+    for (const entry of currentState.schedule.entries) {
+      const entryEndTime = entry.startTime + entry.duration;
+      if (entryEndTime <= currentTime && (!entry.status || entry.status === 'pending')) {
+        dispatch({ type: 'UPDATE_SCHEDULE_ENTRY_STATUS', entryId: entry.id, status: 'skipped', result: '错过时间' });
+      }
+    }
+  };
+
   useEffect(() => {
     const interval = setInterval(() => {
       const currentState = stateRef.current;
-      if (currentState.courses.length === 0) return;
+      const prevTime = currentState.time;
+      const prevDay = currentState.day;
 
-      const updatedCourses: Course[] = [];
-      const coursesToComplete: Course[] = [];
+      dispatch({ type: 'TICK_TIME' });
 
-      for (const course of currentState.courses) {
-        const newProgress = course.progress + 1;
-        if (newProgress >= course.duration) {
-          coursesToComplete.push(course);
-        } else {
-          updatedCourses.push({ ...course, progress: newProgress });
+      setTimeout(() => {
+        const afterTick = stateRef.current;
+        const crossedDay = afterTick.day !== prevDay && afterTick.day > prevDay;
+
+        if (currentState.courses.length > 0) {
+          const updatedCourses: Course[] = [];
+          const coursesToComplete: Course[] = [];
+
+          for (const course of currentState.courses) {
+            const newProgress = course.progress + 1;
+            if (newProgress >= course.duration) {
+              coursesToComplete.push(course);
+            } else {
+              updatedCourses.push({ ...course, progress: newProgress });
+            }
+          }
+
+          if (updatedCourses.length !== currentState.courses.length || 
+              updatedCourses.some((c, i) => c.progress !== currentState.courses[i]?.progress)) {
+            dispatch({ type: 'UPDATE_ALL_COURSES', courses: updatedCourses });
+          }
+
+          for (const course of coursesToComplete) {
+            setTimeout(() => completeCourse(course), 0);
+          }
         }
-      }
 
-      if (updatedCourses.length !== currentState.courses.length || 
-          updatedCourses.some((c, i) => c.progress !== currentState.courses[i]?.progress)) {
-        if (updatedCourses.length > 0 && coursesToComplete.length === 0) {
-          dispatch({ type: 'UPDATE_ALL_COURSES', courses: updatedCourses });
-        } else if (updatedCourses.length > 0) {
-          dispatch({ type: 'UPDATE_ALL_COURSES', courses: updatedCourses });
+        if (afterTick.schedule.autoExecute) {
+          expireMissedSchedules();
+          executeScheduledActivities();
         }
-      }
 
-      for (const course of coursesToComplete) {
-        setTimeout(() => completeCourse(course), 0);
-      }
-    }, 1000);
+        if (crossedDay) {
+          const s = stateRef.current;
+          for (const entry of s.schedule.entries) {
+            if (entry.status !== 'completed') {
+              dispatch({
+                type: 'UPDATE_SCHEDULE_ENTRY_STATUS',
+                entryId: entry.id,
+                status: 'pending',
+                result: undefined,
+              });
+            }
+          }
+        }
+      }, 10);
+    }, TIME_CONFIG.TICK_INTERVAL_MS);
 
     return () => clearInterval(interval);
   }, []);
@@ -544,6 +901,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
     clearSchedule,
     restStudent,
     migrateSaveData,
+    advanceMinutes,
+    toggleAutoExecute,
+    triggerNewDay,
+    executeScheduledActivities,
   };
 
   return <GameContext.Provider value={contextValue}>{children}</GameContext.Provider>;

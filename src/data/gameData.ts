@@ -396,3 +396,12 @@ export const ACTIVITY_COLORS: Record<string, string> = {
   rest: 'from-green-600 to-emerald-500',
   idle: 'from-gray-600 to-slate-500',
 };
+
+export const TIME_CONFIG = {
+  MINUTES_PER_DAY: 1440,
+  TICK_INTERVAL_MS: 1000,
+  MINUTES_PER_TICK: 1,
+  MORNING_START: 360,
+  EVENING_START: 1080,
+  NIGHT_START: 1320,
+};

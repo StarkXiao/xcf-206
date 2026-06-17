@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { useGame } from '../context/GameContext';
-import { RARITY_COLORS, ELEMENT_ICONS, ACTIVITY_NAMES, ACTIVITY_ICONS, ACTIVITY_COLORS, COURSE_DEFS, DUNGEON_DEFS, DIFFICULTY_NAMES } from '../data/gameData';
-import { getFatigueLevel, getFatigueLevelName, getFatigueLevelColor, calculateRestFatigueRecovery, hasSchedulingConflict, formatTime, calculateStudyFatigueCost, calculateDungeonFatigueCost } from '../utils/gameUtils';
-import { ActivityType, Student } from '../types/game';
+import { RARITY_COLORS, ELEMENT_ICONS, ACTIVITY_NAMES, ACTIVITY_ICONS, ACTIVITY_COLORS, COURSE_DEFS, DUNGEON_DEFS, DIFFICULTY_NAMES, TIME_CONFIG } from '../data/gameData';
+import { getFatigueLevel, getFatigueLevelName, getFatigueLevelColor, calculateRestFatigueRecovery, hasSchedulingConflict, calculateStudyFatigueCost, calculateDungeonFatigueCost, formatGameTime, getTimeOfDay, getTimeOfDayName, getTimeOfDayIcon } from '../utils/gameUtils';
+import { ActivityType, Student, ScheduleStatus } from '../types/game';
 
 interface Props {}
 
 export function ScheduleModule({}: Props) {
-  const { state, dispatch, addScheduleEntry, removeScheduleEntry, clearSchedule, restStudent, getEfficiencyMultiplier } = useGame();
+  const { state, dispatch, addScheduleEntry, removeScheduleEntry, clearSchedule, restStudent, getEfficiencyMultiplier, advanceMinutes, toggleAutoExecute, triggerNewDay } = useGame();
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<ActivityType | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<string | null>(null);
@@ -19,6 +19,8 @@ export function ScheduleModule({}: Props) {
 
   const dorm = state.buildings.find((b) => b.type === 'dormitory');
   const dormLevel = dorm?.level || 1;
+  const currentTime = state.time;
+  const timeOfDay = getTimeOfDay(currentTime);
 
   const showNotification = (msg: string) => {
     setNotification(msg);
@@ -83,12 +85,107 @@ export function ScheduleModule({}: Props) {
   };
 
   const getScheduleForStudent = (studentId: string) => {
-    return state.schedule.entries.filter((e) => e.studentId === studentId);
+    return state.schedule.entries
+      .filter((e) => e.studentId === studentId)
+      .sort((a, b) => a.startTime - b.startTime);
+  };
+
+  const getScheduleStatusLabel = (status?: ScheduleStatus): { text: string; color: string } => {
+    switch (status) {
+      case 'active': return { text: '执行中', color: 'text-green-400' };
+      case 'completed': return { text: '已完成', color: 'text-blue-400' };
+      case 'skipped': return { text: '已跳过', color: 'text-gray-400' };
+      default: return { text: '待执行', color: 'text-yellow-400' };
+    }
+  };
+
+  const getStatusBadgeClass = (status?: ScheduleStatus): string => {
+    switch (status) {
+      case 'active': return 'bg-green-500/20 border-green-500';
+      case 'completed': return 'bg-blue-500/20 border-blue-500';
+      case 'skipped': return 'bg-gray-500/20 border-gray-500';
+      default: return 'bg-yellow-500/20 border-yellow-500';
+    }
   };
 
   const getFatigueBarColor = (student: Student) => {
     const level = getFatigueLevel(student.fatigue, student.maxFatigue);
     return getFatigueLevelColor(level);
+  };
+
+  const renderTimeline = () => {
+    const totalMinutes = TIME_CONFIG.MINUTES_PER_DAY;
+    const hours = 24;
+    const hourWidth = 100 / hours;
+
+    const getPosition = (time: number) => (time / totalMinutes) * 100;
+    const getWidth = (dur: number) => (dur / totalMinutes) * 100;
+
+    const pendingEntries = state.schedule.entries.filter((e) => !e.status || e.status === 'pending');
+    const activeEntries = state.schedule.entries.filter((e) => e.status === 'active');
+    const doneEntries = state.schedule.entries.filter((e) => e.status === 'completed' || e.status === 'skipped');
+
+    return (
+      <div className="bg-slate-800/50 rounded-xl border border-cyan-600/50 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+            <span>⏰</span> 每日时间轴
+          </h3>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="px-2 py-1 bg-yellow-500/20 rounded border border-yellow-500/50 text-yellow-400">待执行: {pendingEntries.length}</span>
+            <span className="px-2 py-1 bg-green-500/20 rounded border border-green-500/50 text-green-400">执行中: {activeEntries.length}</span>
+            <span className="px-2 py-1 bg-blue-500/20 rounded border border-blue-500/50 text-blue-400">已完成: {doneEntries.length}</span>
+          </div>
+        </div>
+
+        <div className="relative">
+          <div className="flex border-b border-slate-700 pb-1 mb-2">
+            {Array.from({ length: hours }, (_, i) => (
+              <div key={i} style={{ width: `${hourWidth}%` }} className="text-[9px] text-gray-500 text-center border-r border-slate-700/50 last:border-r-0">
+                {i.toString().padStart(2, '0')}
+              </div>
+            ))}
+          </div>
+
+          {state.students.slice(0, 6).map((student) => (
+            <div key={student.id} className="relative h-8 flex items-center border-b border-slate-700/50">
+            <div className="w-16 text-xs text-gray-400 truncate pr-2 shrink-0" title={student.name}>
+              {student.avatar} {student.name.split('·')[0]}
+            </div>
+            <div className="relative flex-1 h-6 bg-slate-900/50 rounded">
+              {getScheduleForStudent(student.id).map((entry) => {
+                const status = getScheduleStatusLabel(entry.status);
+                return (
+                  <div
+                    key={entry.id}
+                    title={`${ACTIVITY_NAMES[entry.activity]} ${formatGameTime(entry.startTime)}-${formatGameTime(entry.startTime + entry.duration)} (${status.text})${entry.result ? ': ' + entry.result : ''}`}
+                    className={`absolute h-full top-0 rounded bg-gradient-to-r ${ACTIVITY_COLORS[entry.activity]} opacity-${entry.status === 'completed' ? '50' : entry.status === 'skipped' ? '30' : '90'} border border-white/20 cursor-pointer hover:scale-y-110 transition-transform flex items-center justify-center text-[9px] text-white font-bold overflow-hidden`}
+                    style={{
+                      left: `${getPosition(entry.startTime)}%`,
+                      width: `${getWidth(entry.duration)}%`,
+                    }}
+                    onClick={() => entry.status !== 'active' && entry.status !== 'completed' && removeScheduleEntry(entry.id)}
+                  >
+                    {ACTIVITY_ICONS[entry.activity]}
+                  </div>
+                );
+              })}
+              <div
+                className="absolute top-0 h-full w-0.5 bg-red-500 z-10 shadow-[0_0_6px_rgba(239,68,68,0.8)]}"
+                style={{ left: `${getPosition(currentTime)}%` }}
+              />
+            </div>
+            </div>
+          ))}
+
+          {state.students.length > 6 && (
+            <div className="text-center text-xs text-gray-500 py-2">
+              还有 {state.students.length - 6} 名学员未显示...
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const renderStudentCard = (student: Student) => {
@@ -120,7 +217,7 @@ export function ScheduleModule({}: Props) {
             <div className="flex items-center gap-1 text-xs mt-1">
               <span>{ELEMENT_ICONS[student.element]}</span>
               <span className="text-gray-400">
-                {student.status === 'idle' ? '空闲' : student.status === 'studying' ? '学习中' : student.status === 'resting' ? '休息中' : '试炼中'}
+                {student.status === 'idle' ? '空闲' : student.status === 'studying' ? '学习中' : student.status === 'resting' ? '休息中' : student.status === 'training' ? '训练中' : '试炼中'}
               </span>
             </div>
 
@@ -163,27 +260,38 @@ export function ScheduleModule({}: Props) {
             {schedule.length > 0 && (
               <div className="mt-3 pt-3 border-t border-slate-700">
                 <div className="text-xs text-gray-400 mb-2">今日安排:</div>
-                <div className="space-y-1">
-                  {schedule.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className={`flex items-center justify-between text-xs p-2 rounded bg-gradient-to-r ${ACTIVITY_COLORS[entry.activity]}`}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <span>{ACTIVITY_ICONS[entry.activity]}</span>
-                        <span className="text-white font-medium">{ACTIVITY_NAMES[entry.activity]}</span>
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {schedule.map((entry) => {
+                    const statusInfo = getScheduleStatusLabel(entry.status);
+                    return (
+                      <div
+                        key={entry.id}
+                        className={`flex items-center justify-between text-xs p-2 rounded bg-gradient-to-r ${ACTIVITY_COLORS[entry.activity]} ${entry.status === 'completed' || entry.status === 'skipped' ? 'opacity-60' : ''} relative`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span>{ACTIVITY_ICONS[entry.activity]}</span>
+                          <span className="text-white font-medium">{ACTIVITY_NAMES[entry.activity]}</span>
+                          <span className={`text-[9px] px-1 rounded border ${getStatusBadgeClass(entry.status)} ${statusInfo.color}`}>
+                            {statusInfo.text}
+                          </span>
+                        </div>
+                        <div className="text-white/80 text-[10px]">
+                          {formatGameTime(entry.startTime)} - {formatGameTime(entry.startTime + entry.duration)}
+                        </div>
+                        {entry.result && (
+                          <div className="col-span-2 mt-1 text-[9px] text-white/70 bg-black/20 rounded px-1">
+                            {entry.result}
+                          </div>
+                        )}
                       </div>
-                      <div className="text-white/80">
-                        {formatTime(entry.startTime)} - {formatTime(entry.startTime + entry.duration)}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
 
             {selectedStudent === student.id && (
-              <div className="mt-3 pt-3 border-t border-slate-700">
+              <div className="mt-3 pt-3 border-t border-slate-700 space-y-2">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -194,6 +302,22 @@ export function ScheduleModule({}: Props) {
                 >
                   😴 安排休息 60 分钟
                 </button>
+                {schedule.filter((e) => e.status !== 'completed' && e.status !== 'skipped').length > 0 && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        schedule
+                          .filter((x) => x.status !== 'completed' && x.status !== 'skipped')
+                          .forEach((x) => removeScheduleEntry(x.id));
+                        showNotification('🗑️ 已清除该学员排班');
+                      }}
+                      className="flex-1 py-1.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-white"
+                    >
+                      清除排班
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -204,6 +328,8 @@ export function ScheduleModule({}: Props) {
 
   const tiredStudents = state.students.filter((s) => s.fatigue > s.maxFatigue * 0.5);
   const exhaustedStudents = state.students.filter((s) => s.fatigue > s.maxFatigue * 0.8);
+  const pendingCount = state.schedule.entries.filter((e) => !e.status || e.status === 'pending').length;
+  const completedToday = state.schedule.entries.filter((e) => e.status === 'completed').length;
 
   return (
     <div className="space-y-4">
@@ -217,24 +343,97 @@ export function ScheduleModule({}: Props) {
         <h2 className="text-2xl font-bold text-white flex items-center gap-2">
           <span>📅</span> 学员排班与疲劳管理
         </h2>
-        <div className="flex items-center gap-3">
-          <div className="bg-slate-800/80 px-4 py-2 rounded-lg border border-orange-600/50">
-            <span className="text-gray-400 text-sm">疲劳学员: </span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="bg-slate-800/80 px-4 py-2 rounded-lg border border-cyan-600/50 flex items-center gap-2">
+            <span className="text-2xl">{getTimeOfDayIcon(timeOfDay)}</span>
+            <div>
+              <div className="text-xs text-gray-400">第 {state.day} 天</div>
+              <div className="text-lg font-bold text-cyan-400">
+                {formatGameTime(currentTime)}
+              </div>
+            </div>
+            <div className="text-xs text-gray-400 ml-2">
+              {getTimeOfDayName(timeOfDay)}
+            </div>
+          </div>
+
+          <div className="bg-slate-800/80 px-3 py-2 rounded-lg border border-orange-600/50">
+            <span className="text-gray-400 text-sm">待执行: </span>
+            <span className="text-yellow-400 font-bold">{pendingCount}</span>
+          </div>
+          <div className="bg-slate-800/80 px-3 py-2 rounded-lg border border-blue-600/50">
+            <span className="text-gray-400 text-sm">已完成: </span>
+            <span className="text-blue-400 font-bold">{completedToday}</span>
+          </div>
+          <div className="bg-slate-800/80 px-3 py-2 rounded-lg border border-yellow-600/50">
+            <span className="text-gray-400 text-sm">疲劳: </span>
             <span className="text-yellow-400 font-bold">{tiredStudents.length}</span>
           </div>
-          <div className="bg-slate-800/80 px-4 py-2 rounded-lg border border-red-600/50">
-            <span className="text-gray-400 text-sm">精疲力竭: </span>
+          <div className="bg-slate-800/80 px-3 py-2 rounded-lg border border-red-600/50">
+            <span className="text-gray-400 text-sm">精疲: </span>
             <span className="text-red-400 font-bold">{exhaustedStudents.length}</span>
           </div>
-          <button
-            onClick={() => setShowBulkRest(true)}
-            disabled={tiredStudents.filter((s) => s.status === 'idle').length === 0}
-            className="px-4 py-2 rounded-lg font-bold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            😴 批量休息
-          </button>
         </div>
       </div>
+
+      <div className="bg-slate-800/50 rounded-xl border border-cyan-600/50 p-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-400">自动执行:</span>
+              <button
+                onClick={() => toggleAutoExecute(!state.schedule.autoExecute)}
+                className={`px-4 py-1.5 rounded-lg font-bold text-sm transition-all ${
+                  state.schedule.autoExecute
+                    ? 'bg-green-600 text-white'
+                    : 'bg-slate-700 text-gray-400'
+                }`}
+              >
+                {state.schedule.autoExecute ? '✅ 开启' : '⏸️ 关闭'}
+              </button>
+            </div>
+            <span className="text-xs text-gray-500">每秒推进1分钟</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => advanceMinutes(30)}
+              className="px-3 py-1.5 rounded-lg font-bold text-sm bg-slate-700 hover:bg-slate-600 text-white"
+            >
+              ⏩ +30分
+            </button>
+            <button
+              onClick={() => advanceMinutes(120)}
+              className="px-3 py-1.5 rounded-lg font-bold text-sm bg-slate-700 hover:bg-slate-600 text-white"
+            >
+              ⏩ +2小时
+            </button>
+            <button
+              onClick={() => advanceMinutes(480)}
+              className="px-3 py-1.5 rounded-lg font-bold text-sm bg-slate-700 hover:bg-slate-600 text-white"
+            >
+              ⏩ +8小时
+            </button>
+            <button
+              onClick={() => {
+                triggerNewDay();
+                showNotification('🌅 新的一天开始了！');
+              }}
+              className="px-4 py-1.5 rounded-lg font-bold text-sm bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white"
+            >
+              🌅 进入下一天
+            </button>
+            <button
+              onClick={() => setShowBulkRest(true)}
+              disabled={tiredStudents.filter((s) => s.status === 'idle').length === 0}
+              className="px-4 py-1.5 rounded-lg font-bold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              😴 批量休息
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {renderTimeline()}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-4">
@@ -249,7 +448,7 @@ export function ScheduleModule({}: Props) {
                 <p className="text-xs text-gray-600 mt-1">先去招募学员吧</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[600px] overflow-y-auto">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[700px] overflow-y-auto">
                 {state.students.map((student) => renderStudentCard(student))}
               </div>
             )}
@@ -261,7 +460,6 @@ export function ScheduleModule({}: Props) {
             <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
               <span>➕</span> 添加排班
             </h3>
-
             <div className="space-y-3">
               <div>
                 <label className="text-sm text-cyan-300 mb-1 block">选择活动</label>
@@ -352,24 +550,68 @@ export function ScheduleModule({}: Props) {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-sm text-cyan-300 mb-1 block">开始时间</label>
-                  <input
-                    type="number"
-                    value={startTime}
-                    onChange={(e) => setStartTime(Math.max(0, parseInt(e.target.value) || 0))}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm"
-                    placeholder="分钟"
-                  />
+                  <div className="flex gap-1">
+                    <input
+                      type="number"
+                      min="0"
+                      max={TIME_CONFIG.MINUTES_PER_DAY - 1}
+                      value={startTime}
+                      onChange={(e) => setStartTime(Math.max(0, Math.min(TIME_CONFIG.MINUTES_PER_DAY - 1, parseInt(e.target.value) || 0)))}
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-2 text-white text-sm"
+                      placeholder="分"
+                    />
+                  </div>
+                  <div className="text-[9px] text-gray-500 mt-0.5">{formatGameTime(startTime)}</div>
                 </div>
                 <div>
                   <label className="text-sm text-cyan-300 mb-1 block">持续时间</label>
                   <input
                     type="number"
+                    min="10"
                     value={duration}
                     onChange={(e) => setDuration(Math.max(10, parseInt(e.target.value) || 10))}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm"
-                    placeholder="分钟"
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-2 text-white text-sm"
+                    placeholder="分"
                   />
+                  <div className="text-[9px] text-gray-500 mt-0.5">{formatGameTime(duration)} ~ {formatGameTime(startTime + duration)}</div>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-4 gap-1">
+                {[30, 60, 120, 180].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setDuration(d)}
+                    className={`py-1 rounded text-xs ${
+                      duration === d ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-gray-300 hover:bg-slate-600'
+                    }`}
+                  >
+                    {d}分
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-4 gap-1">
+                {[480, 540, 600, 780].map((t, i) => (
+                  <div key={t} className="col-span-1 grid grid-cols-2 gap-1">
+                    <button
+                      onClick={() => setStartTime(t)}
+                      className={`py-1 rounded text-xs ${
+                        startTime === t ? 'bg-yellow-600 text-white' : 'bg-slate-700 text-gray-300 hover:bg-slate-600'
+                      }`}
+                    >
+                      {['8:00', '9:00', '10:00', '13:00'][i]}
+                    </button>
+                    <button
+                      onClick={() => setStartTime(t + 60)}
+                      className={`py-1 rounded text-xs ${
+                        startTime === t + 60 ? 'bg-yellow-600 text-white' : 'bg-slate-700 text-gray-300 hover:bg-slate-600'
+                      }`}
+                    >
+                      {['9:00', '10:00', '11:00', '14:00'][i]}
+                    </button>
+                  </div>
+                ))}
               </div>
 
               {selectedActivity && (
@@ -381,10 +623,18 @@ export function ScheduleModule({}: Props) {
                         +{calculateStudyFatigueCost(duration)} 点
                       </div>
                     )}
+                    {selectedActivity === 'train' && (
+                      <div>
+                        <span className="text-yellow-400">预计疲劳消耗: </span>
+                        +{Math.floor(duration * 1.5 / 60)} 点
+                        <span className="ml-2 text-green-400">预计属性提升</span>
+                      </div>
+                    )}
                     {selectedActivity === 'dungeon' && selectedDungeon && (
                       <div>
                         <span className="text-yellow-400">预计疲劳消耗: </span>
                         +{calculateDungeonFatigueCost(DUNGEON_DEFS.find((d) => d.id === selectedDungeon)?.difficulty || 'easy')} 点
+                        <span className="ml-2 text-green-400">可能获得奖励</span>
                       </div>
                     )}
                     {selectedActivity === 'rest' && (
@@ -448,6 +698,7 @@ export function ScheduleModule({}: Props) {
                 <p>• 士气 ≥ 80% 时，效率额外 +50%</p>
                 <p>• 每日结算可恢复 {30 + dormLevel * 10} 点疲劳</p>
                 <p>• 宿舍等级越高，休息恢复越快</p>
+                <p>• 点击排班条目可删除（未执行状态）</p>
               </div>
             </div>
           </div>

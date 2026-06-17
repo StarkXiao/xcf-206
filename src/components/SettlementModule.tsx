@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useGame } from '../context/GameContext';
-import { BUILDING_DEFS, FATIGUE_CONFIG } from '../data/gameData';
+import { BUILDING_DEFS, FATIGUE_CONFIG, ACTIVITY_NAMES } from '../data/gameData';
 import { calculateTotalDailyOutput, calculateBuildingDailyOutput, formatNumber, calculateDailyFatigueRecovery } from '../utils/gameUtils';
 
 interface Props {}
@@ -24,6 +24,15 @@ export function SettlementModule({}: Props) {
     materials: dailyOutput.materials,
   };
 
+  const scheduleEntries = state.schedule.entries;
+  const completedSchedules = scheduleEntries.filter((e) => e.status === 'completed').length;
+  const skippedSchedules = scheduleEntries.filter((e) => e.status === 'skipped').length;
+  const pendingSchedules = scheduleEntries.filter((e) => !e.status || e.status === 'pending').length;
+  const scheduleByActivity = scheduleEntries.filter((e) => e.status === 'completed').reduce((acc, e) => {
+    acc[e.activity] = (acc[e.activity] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
   const doSettlement = () => {
     if (!canSettle) return;
 
@@ -38,37 +47,12 @@ export function SettlementModule({}: Props) {
       },
     });
 
-    dispatch({ type: 'NEW_DAY' });
-
-    const dorm = state.buildings.find((b) => b.type === 'dormitory');
-    const dormLevel = dorm?.level || 0;
-    const healAmount = 10 + dormLevel * 5;
-    const fatigueRecovery = calculateDailyFatigueRecovery(dormLevel);
-
-    for (const student of state.students) {
-      const newHp = Math.min(student.stats.maxHp, student.stats.hp + healAmount);
-      const newMorale = Math.min(100, student.morale + 10);
-      const newFatigue = Math.max(0, student.fatigue - fatigueRecovery);
-      let newStatus = student.status;
-      if (newMorale >= 60 && newHp >= student.stats.maxHp * 0.5 && newFatigue < student.maxFatigue * 0.6) {
-        newStatus = 'idle';
-      }
-      dispatch({
-        type: 'UPDATE_STUDENT',
-        student: {
-          ...student,
-          stats: { ...student.stats, hp: newHp },
-          morale: newMorale,
-          fatigue: newFatigue,
-          status: newStatus,
-        },
-      });
-    }
-
     dispatch({
       type: 'UPDATE_ACADEMY_EXP',
       exp: state.students.length * 10,
     });
+
+    dispatch({ type: 'NEW_DAY' });
 
     saveGame();
     setSettled(state.day);
@@ -176,6 +160,43 @@ export function SettlementModule({}: Props) {
                 </div>
               </div>
             </div>
+
+            {scheduleEntries.length > 0 && (
+              <div className="p-4 bg-slate-900/60 rounded-xl border border-cyan-600/50">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="text-gray-400 text-sm">今日排班执行</div>
+                    <div className="text-white font-bold">
+                      共 {scheduleEntries.length} 项安排
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="px-3 py-1 rounded bg-green-500/20 border border-green-500/50 text-green-400 text-xs font-bold">
+                      ✅ 完成 {completedSchedules}
+                    </div>
+                    {skippedSchedules > 0 && (
+                      <div className="px-3 py-1 rounded bg-gray-500/20 border border-gray-500/50 text-gray-400 text-xs font-bold">
+                        ⏭️ 错过 {skippedSchedules}
+                      </div>
+                    )}
+                    {pendingSchedules > 0 && (
+                      <div className="px-3 py-1 rounded bg-yellow-500/20 border border-yellow-500/50 text-yellow-400 text-xs font-bold">
+                        ⏳ 未执行 {pendingSchedules}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {Object.keys(scheduleByActivity).length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(scheduleByActivity).map(([activity, count]) => (
+                      <div key={activity} className="px-2 py-1 rounded bg-slate-800 text-xs">
+                        {ACTIVITY_NAMES[activity as keyof typeof ACTIVITY_NAMES]} × {count}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="mt-6">

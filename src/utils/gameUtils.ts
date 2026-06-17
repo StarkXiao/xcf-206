@@ -1,4 +1,4 @@
-import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType } from '../types/game';
+import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType, TimeOfDay } from '../types/game';
 import {
   RARITY_WEIGHTS,
   RARITY_MULTIPLIERS,
@@ -10,6 +10,7 @@ import {
   ELEMENT_NAMES,
   SKILLS,
   FATIGUE_CONFIG,
+  TIME_CONFIG,
 } from '../data/gameData';
 
 export function pickRandom<T>(arr: T[]): T {
@@ -397,4 +398,92 @@ export function getActivityIcon(activity: ActivityType): string {
     idle: '💤',
   };
   return icons[activity];
+}
+
+export function formatGameTime(minutes: number): string {
+  const m = minutes % TIME_CONFIG.MINUTES_PER_DAY;
+  const hours = Math.floor(m / 60);
+  const mins = m % 60;
+  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+}
+
+export function getTimeOfDay(minutes: number): TimeOfDay {
+  const m = minutes % TIME_CONFIG.MINUTES_PER_DAY;
+  if (m < 360) return 'dawn';
+  if (m < 720) return 'morning';
+  if (m < TIME_CONFIG.EVENING_START) return 'afternoon';
+  if (m < TIME_CONFIG.NIGHT_START) return 'evening';
+  return 'night';
+}
+
+export function getTimeOfDayName(timeOfDay: TimeOfDay): string {
+  const names: Record<TimeOfDay, string> = {
+    dawn: '黎明',
+    morning: '上午',
+    afternoon: '下午',
+    evening: '傍晚',
+    night: '夜晚',
+  };
+  return names[timeOfDay];
+}
+
+export function getTimeOfDayIcon(timeOfDay: TimeOfDay): string {
+  const icons: Record<TimeOfDay, string> = {
+    dawn: '🌅',
+    morning: '☀️',
+    afternoon: '🌤️',
+    evening: '🌇',
+    night: '🌙',
+  };
+  return icons[timeOfDay];
+}
+
+export function getScheduleEntriesAtTime(
+  entries: ScheduleEntry[],
+  currentTime: number
+): ScheduleEntry[] {
+  return entries.filter(
+    (e) =>
+      e.status !== 'completed' &&
+      e.status !== 'skipped' &&
+      e.startTime <= currentTime &&
+      e.startTime + e.duration > currentTime
+  );
+}
+
+export function getPendingScheduleEntries(
+  entries: ScheduleEntry[],
+  currentTime: number
+): ScheduleEntry[] {
+  return entries.filter(
+    (e) =>
+      (!e.status || e.status === 'pending') &&
+      e.startTime <= currentTime &&
+      e.startTime + e.duration > currentTime
+  );
+}
+
+export function getExpiredScheduleEntries(
+  entries: ScheduleEntry[],
+  currentTime: number
+): ScheduleEntry[] {
+  return entries.filter(
+    (e) =>
+      (!e.status || e.status === 'pending') &&
+      e.startTime + e.duration <= currentTime
+  );
+}
+
+export function isStudentBusy(
+  entries: ScheduleEntry[],
+  studentId: string,
+  currentTime: number
+): boolean {
+  return entries.some(
+    (e) =>
+      e.studentId === studentId &&
+      e.status === 'active' &&
+      e.startTime <= currentTime &&
+      e.startTime + e.duration > currentTime
+  );
 }

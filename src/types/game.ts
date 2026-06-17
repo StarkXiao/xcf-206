@@ -204,6 +204,8 @@ export type ActivityType =
   | 'rest'
   | 'idle';
 
+export type ScheduleStatus = 'pending' | 'active' | 'completed' | 'skipped';
+
 export interface ScheduleEntry {
   id: string;
   studentId: string;
@@ -212,14 +214,20 @@ export interface ScheduleEntry {
   duration: number;
   courseType?: CourseType;
   dungeonId?: string;
+  status?: ScheduleStatus;
+  executedAt?: number;
+  result?: string;
 }
 
 export interface DailySchedule {
   day: number;
   entries: ScheduleEntry[];
+  autoExecute: boolean;
 }
 
 export type FatigueLevel = 'energetic' | 'normal' | 'tired' | 'exhausted';
+
+export type TimeOfDay = 'dawn' | 'morning' | 'afternoon' | 'evening' | 'night';
 
 export type ModuleType = 
   | 'overview'
