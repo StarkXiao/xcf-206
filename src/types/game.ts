@@ -198,6 +198,7 @@ export interface GameState {
   recruitHistory: RecruitHistoryEntry[];
   recruitStats: RecruitStats;
   pityCounters: PityCounter[];
+  limitedPoolEndTimes: LimitedPoolEndTimes;
 }
 
 export type ActivityType = 
@@ -256,7 +257,7 @@ export interface RecruitPoolDef {
   pity: PityConfig;
   rateUp?: RateUpConfig;
   isLimited: boolean;
-  endTime?: number;
+  defaultDurationMs?: number;
 }
 
 export interface RecruitHistoryEntry {
@@ -287,6 +288,11 @@ export interface PityCounter {
   currentCount: number;
   sinceLastEpic: number;
   sinceLastLegendary: number;
+}
+
+export interface LimitedPoolEndTimes {
+  rate_up_epic?: number;
+  rate_up_legendary?: number;
 }
 
 export type ModuleType =

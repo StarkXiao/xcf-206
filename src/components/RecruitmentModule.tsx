@@ -13,7 +13,7 @@ interface RecruitResult {
 type TabType = 'pools' | 'history' | 'stats';
 
 export function RecruitmentModule() {
-  const { state, dispatch, getStudentCapacity, canAfford, batchRecruitUpdate } = useGame();
+  const { state, dispatch, getStudentCapacity, canAfford, batchRecruitUpdate, getPoolEndTime, resetLimitedPool } = useGame();
   const [selectedPool, setSelectedPool] = useState<PoolType>('standard');
   const [recruitedResults, setRecruitedResults] = useState<RecruitResult[]>([]);
   const [showResults, setShowResults] = useState(false);
@@ -222,11 +222,12 @@ export function RecruitmentModule() {
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {(Object.values(RECRUIT_POOL_DEFS) as typeof RECRUIT_POOL_DEFS[string][]).map((pool) => {
-          const poolActive = isPoolActive(pool.id);
+          const poolEndTime = getPoolEndTime(pool.id);
+          const poolActive = isPoolActive(pool.id, poolEndTime);
           const isSelected = selectedPool === pool.id;
           const poolPity = state.pityCounters.find((c) => c.poolId === pool.id);
           const pityCount = poolPity?.currentCount || 0;
-          const remaining = getPoolRemainingTime(pool.endTime);
+          const remaining = getPoolRemainingTime(poolEndTime);
 
           return (
             <button

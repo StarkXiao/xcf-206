@@ -1,6 +1,6 @@
 import { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react';
-import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus, PoolType, RecruitHistoryEntry, RecruitStats, PityCounter, Rarity } from '../types/game';
-import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG, TIME_CONFIG } from '../data/gameData';
+import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus, PoolType, RecruitHistoryEntry, RecruitStats, PityCounter, Rarity, LimitedPoolEndTimes } from '../types/game';
+import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG, TIME_CONFIG, RECRUIT_POOL_DEFS } from '../data/gameData';
 import { levelUpStudent, generateId, getEfficiencyMultiplier, formatGameTime, createInitialPityCounters, createInitialRecruitStats, updatePityCounter } from '../utils/gameUtils';
 
 type GameAction =
@@ -34,9 +34,19 @@ type GameAction =
   | { type: 'ADD_RECRUIT_HISTORY'; entry: RecruitHistoryEntry }
   | { type: 'UPDATE_RECRUIT_STATS'; stats: Partial<RecruitStats> }
   | { type: 'UPDATE_PITY_COUNTER'; poolId: PoolType; counter: PityCounter }
-  | { type: 'BATCH_RECRUIT_UPDATE'; historyEntries: RecruitHistoryEntry[]; statsUpdate: Partial<RecruitStats>; pityUpdates: PityCounter[] };
+  | { type: 'BATCH_RECRUIT_UPDATE'; historyEntries: RecruitHistoryEntry[]; statsUpdate: Partial<RecruitStats>; pityUpdates: PityCounter[] }
+  | { type: 'SET_LIMITED_POOL_END_TIME'; poolId: PoolType; endTime: number | undefined };
 
 const STORAGE_KEY = 'magic_academy_save';
+
+function createInitialLimitedPoolEndTimes(): LimitedPoolEndTimes {
+  const endTimes: LimitedPoolEndTimes = {};
+  const pools = Object.values(RECRUIT_POOL_DEFS).filter(p => p.isLimited && p.defaultDurationMs);
+  for (const pool of pools) {
+    endTimes[pool.id as keyof LimitedPoolEndTimes] = Date.now() + pool.defaultDurationMs;
+  }
+  return endTimes;
+}
 
 function getInitialBuildings(): Building[] {
   return [
@@ -82,6 +92,7 @@ function createInitialState(): GameState {
     recruitHistory: [],
     recruitStats: createInitialRecruitStats(),
     pityCounters: createInitialPityCounters(),
+    limitedPoolEndTimes: createInitialLimitedPoolEndTimes(),
   };
 }
 
@@ -442,6 +453,16 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case 'SET_LIMITED_POOL_END_TIME': {
+      return {
+        ...state,
+        limitedPoolEndTimes: {
+          ...state.limitedPoolEndTimes,
+          [action.poolId]: action.endTime,
+        },
+      };
+    }
+
     default:
       return state;
   }
@@ -471,6 +492,8 @@ interface GameContextType {
   updateRecruitStats: (update: Partial<RecruitStats>) => void;
   updatePityCounters: (counters: PityCounter[]) => void;
   batchRecruitUpdate: (historyEntries: RecruitHistoryEntry[], statsUpdate: Partial<RecruitStats>, pityUpdates: PityCounter[]) => void;
+  getPoolEndTime: (poolId: PoolType) => number | undefined;
+  resetLimitedPool: (poolId: PoolType) => void;
 }
 
 const GameContext = createContext<GameContextType | null>(null);
@@ -494,6 +517,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       recruitHistory: savedState.recruitHistory || [],
       recruitStats: savedState.recruitStats || createInitialRecruitStats(),
       pityCounters: savedState.pityCounters || createInitialPityCounters(),
+      limitedPoolEndTimes: savedState.limitedPoolEndTimes || createInitialLimitedPoolEndTimes(),
     };
     if (migrated.schedule.autoExecute === undefined) {
       migrated.schedule.autoExecute = true;
@@ -951,6 +975,21 @@ export function GameProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'BATCH_RECRUIT_UPDATE', historyEntries, statsUpdate, pityUpdates });
   };
 
+  const getPoolEndTime = (poolId: PoolType): number | undefined => {
+    return state.limitedPoolEndTimes[poolId as keyof LimitedPoolEndTimes];
+  };
+
+  const resetLimitedPool = (poolId: PoolType) => {
+    const poolDef = RECRUIT_POOL_DEFS[poolId];
+    if (poolDef?.isLimited && poolDef.defaultDurationMs) {
+      dispatch({
+        type: 'SET_LIMITED_POOL_END_TIME',
+        poolId,
+        endTime: Date.now() + poolDef.defaultDurationMs,
+      });
+    }
+  };
+
   const contextValue: GameContextType = {
     state,
     dispatch,
@@ -975,6 +1014,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
     updateRecruitStats,
     updatePityCounters,
     batchRecruitUpdate,
+    getPoolEndTime,
+    resetLimitedPool,
   };
 
   return <GameContext.Provider value={contextValue}>{children}</GameContext.Provider>;

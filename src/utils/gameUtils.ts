@@ -634,9 +634,9 @@ export function getPoolRemainingTime(endTime?: number): string {
   return `${hours}小时${minutes}分钟`;
 }
 
-export function isPoolActive(poolId: PoolType): boolean {
+export function isPoolActive(poolId: PoolType, endTime?: number): boolean {
   const poolDef = RECRUIT_POOL_DEFS[poolId];
   if (!poolDef.isLimited) return true;
-  if (!poolDef.endTime) return true;
-  return Date.now() < poolDef.endTime;
+  if (!endTime) return true;
+  return Date.now() < endTime;
 }

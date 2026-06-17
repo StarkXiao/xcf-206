@@ -427,7 +427,7 @@ export const RECRUIT_POOL_DEFS: Record<string, RecruitPoolDef> = {
     pity: { softPityStart: 50, hardPity: 60, guaranteedRarity: 'epic' },
     rateUp: { rarity: 'epic', bonusMultiplier: 2.0, element: 'light' },
     isLimited: true,
-    endTime: Date.now() + 7 * 24 * 60 * 60 * 1000,
+    defaultDurationMs: 7 * 24 * 60 * 60 * 1000,
   },
   rate_up_legendary: {
     id: 'rate_up_legendary',
@@ -439,7 +439,7 @@ export const RECRUIT_POOL_DEFS: Record<string, RecruitPoolDef> = {
     pity: { softPityStart: 90, hardPity: 120, guaranteedRarity: 'legendary' },
     rateUp: { rarity: 'legendary', bonusMultiplier: 3.0, element: 'dark' },
     isLimited: true,
-    endTime: Date.now() + 3 * 24 * 60 * 60 * 1000,
+    defaultDurationMs: 3 * 24 * 60 * 60 * 1000,
   },
 };
 
