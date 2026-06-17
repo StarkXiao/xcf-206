@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useGame } from '../context/GameContext';
 import { COURSE_DEFS, RARITY_COLORS, ELEMENT_ICONS, ELEMENT_NAMES } from '../data/gameData';
-import { Student, Course, CourseType } from '../types/game';
-import { formatTime, generateId, levelUpStudent, getExpToNextLevel } from '../utils/gameUtils';
+import { Course, CourseType } from '../types/game';
+import { formatTime, generateId } from '../utils/gameUtils';
 
 interface Props {}
 
@@ -11,6 +11,7 @@ export function CourseModule({}: Props) {
   const [selectedCourseType, setSelectedCourseType] = useState<CourseType | null>(null);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [notification, setNotification] = useState<string | null>(null);
+  const [completedCourses, setCompletedCourses] = useState<string[]>([]);
 
   const classroom = state.buildings.find((b) => b.type === 'classroom');
   const maxCourses = 1 + (classroom?.level || 0);
@@ -20,72 +21,20 @@ export function CourseModule({}: Props) {
   const studyingStudents = state.students.filter((s) => s.status === 'studying');
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      updateCourses();
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [state.courses]);
-
-  const updateCourses = () => {
-    const updatedCourses: Course[] = [];
-    for (const course of state.courses) {
-      const newProgress = course.progress + 1;
-      if (newProgress >= course.duration) {
-        completeCourse(course);
-      } else {
-        updatedCourses.push({ ...course, progress: newProgress });
-      }
+    if (state.courses.length === 0 && completedCourses.length > 0) {
+      setCompletedCourses([]);
     }
-    if (updatedCourses.length !== state.courses.length || updatedCourses.some((c, i) => c.progress !== state.courses[i]?.progress)) {
-      dispatch({ type: 'LOAD_STATE', state: { ...state, courses: updatedCourses } });
-    }
-  };
-
-  const completeCourse = (course: Course) => {
-    const def = COURSE_DEFS[course.courseType];
-    const library = state.buildings.find((b) => b.type === 'library');
-    const expBonus = 1 + (library?.level || 0) * 0.1;
-
-    for (const studentId of course.studentIds) {
-      const student = state.students.find((s) => s.id === studentId);
-      if (!student) continue;
-
-      const elementBonus =
-        def.elementBonus && student.element === def.elementBonus ? 1.3 : 1;
-      const rarityBonus = 1 + (['legendary', 'epic', 'rare'].indexOf(student.rarity) >= 0 ? 0.2 : 0);
-      const totalExp = Math.floor(def.baseExp * expBonus * elementBonus * rarityBonus);
-
-      const boostedStats = { ...student.stats };
-      for (const [stat, boost] of Object.entries(def.statBoosts)) {
-        if (boostedStats[stat as keyof typeof boostedStats] !== undefined) {
-          const newValue = boostedStats[stat as keyof typeof boostedStats] + Math.floor((boost as number) * elementBonus);
-          (boostedStats as Record<string, number>)[stat] = newValue;
-        }
-      }
-      boostedStats.hp = boostedStats.maxHp;
-
-      let updatedStudent: Student = {
-        ...student,
-        stats: boostedStats,
-        exp: student.exp + totalExp,
-        status: 'idle',
-        currentCourseId: undefined,
-        studyProgress: 0,
-        morale: Math.max(0, student.morale - 5),
-      };
-      updatedStudent = levelUpStudent(updatedStudent);
-
-      dispatch({ type: 'UPDATE_STUDENT', student: updatedStudent });
-      dispatch({ type: 'UPDATE_ACADEMY_EXP', exp: Math.floor(totalExp / 5) });
-    }
-
-    dispatch({ type: 'REMOVE_COURSE', courseId: course.id });
-    showNotification(`📚 ${def.name} 课程完成！${course.studentIds.length}名学员获得经验`);
-  };
+  }, [state.courses.length, completedCourses.length]);
 
   const showNotification = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  const toggleStudentSelection = (studentId: string) => {
+    setSelectedStudents((prev) =>
+      prev.includes(studentId) ? prev.filter((id) => id !== studentId) : [...prev, studentId]
+    );
   };
 
   const startCourse = () => {
@@ -139,12 +88,6 @@ export function CourseModule({}: Props) {
     setSelectedCourseType(null);
     setSelectedStudents([]);
     showNotification(`🎓 ${def.name} 课程已开始！`);
-  };
-
-  const toggleStudentSelection = (studentId: string) => {
-    setSelectedStudents((prev) =>
-      prev.includes(studentId) ? prev.filter((id) => id !== studentId) : [...prev, studentId]
-    );
   };
 
   return (
@@ -332,7 +275,7 @@ export function CourseModule({}: Props) {
                       <div className="text-xs text-green-400 text-center mt-1">✓ 已选</div>
                     )}
                     {disabled && def && (
-                      <div className="text-xs text-red-400 text-center mt-1">Lv.{def.requiredLevel}</div>
+                      <div className="text-xs text-red-400 text-center mt-1">需Lv.{def.requiredLevel}</div>
                     )}
                   </button>
                 );

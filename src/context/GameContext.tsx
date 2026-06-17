@@ -1,6 +1,7 @@
-import { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
-import { GameState, Resources, Building, Student, Course, BuildingType } from '../types/game';
-import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL } from '../data/gameData';
+import { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react';
+import { GameState, Resources, Building, Student, Course, BuildingType, CourseType } from '../types/game';
+import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS } from '../data/gameData';
+import { levelUpStudent } from '../utils/gameUtils';
 
 type GameAction =
   | { type: 'ADD_RESOURCES'; resources: Partial<Resources> }
@@ -12,6 +13,7 @@ type GameAction =
   | { type: 'ADD_COURSE'; course: Course }
   | { type: 'REMOVE_COURSE'; courseId: string }
   | { type: 'UPDATE_COURSE'; course: Course }
+  | { type: 'UPDATE_ALL_COURSES'; courses: Course[] }
   | { type: 'ADVANCE_TIME'; deltaTime: number }
   | { type: 'NEW_DAY' }
   | { type: 'UPDATE_SETTINGS'; settings: Partial<GameState['settings']> }
@@ -184,6 +186,10 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case 'UPDATE_ALL_COURSES': {
+      return { ...state, courses: action.courses };
+    }
+
     case 'ADVANCE_TIME': {
       return { ...state, time: state.time + action.deltaTime };
     }
@@ -261,6 +267,89 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }
     return createInitialState();
   });
+
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const completeCourse = (course: Course) => {
+    const def = COURSE_DEFS[course.courseType];
+    const currentState = stateRef.current;
+    const library = currentState.buildings.find((b) => b.type === 'library');
+    const expBonus = 1 + (library?.level || 0) * 0.1;
+
+    const completedStudentIds: string[] = [];
+
+    for (const studentId of course.studentIds) {
+      const student = currentState.students.find((s) => s.id === studentId);
+      if (!student) continue;
+
+      const elementBonus =
+        def.elementBonus && student.element === def.elementBonus ? 1.3 : 1;
+      const rarityBonus = 1 + (['legendary', 'epic', 'rare'].indexOf(student.rarity) >= 0 ? 0.2 : 0);
+      const totalExp = Math.floor(def.baseExp * expBonus * elementBonus * rarityBonus);
+
+      const boostedStats = { ...student.stats };
+      for (const [stat, boost] of Object.entries(def.statBoosts)) {
+        if (boostedStats[stat as keyof typeof boostedStats] !== undefined) {
+          const newValue = boostedStats[stat as keyof typeof boostedStats] + Math.floor((boost as number) * elementBonus);
+          (boostedStats as Record<string, number>)[stat] = newValue;
+        }
+      }
+      boostedStats.hp = boostedStats.maxHp;
+
+      let updatedStudent: Student = {
+        ...student,
+        stats: boostedStats,
+        exp: student.exp + totalExp,
+        status: 'idle' as const,
+        currentCourseId: undefined,
+        studyProgress: 0,
+        morale: Math.max(0, student.morale - 5),
+      };
+      updatedStudent = levelUpStudent(updatedStudent);
+
+      dispatch({ type: 'UPDATE_STUDENT', student: updatedStudent });
+      dispatch({ type: 'UPDATE_ACADEMY_EXP', exp: Math.floor(totalExp / 5) });
+      completedStudentIds.push(studentId);
+    }
+
+    dispatch({ type: 'REMOVE_COURSE', courseId: course.id });
+    return completedStudentIds;
+  };
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const currentState = stateRef.current;
+      if (currentState.courses.length === 0) return;
+
+      const updatedCourses: Course[] = [];
+      const coursesToComplete: Course[] = [];
+
+      for (const course of currentState.courses) {
+        const newProgress = course.progress + 1;
+        if (newProgress >= course.duration) {
+          coursesToComplete.push(course);
+        } else {
+          updatedCourses.push({ ...course, progress: newProgress });
+        }
+      }
+
+      if (updatedCourses.length !== currentState.courses.length || 
+          updatedCourses.some((c, i) => c.progress !== currentState.courses[i]?.progress)) {
+        if (updatedCourses.length > 0 && coursesToComplete.length === 0) {
+          dispatch({ type: 'UPDATE_ALL_COURSES', courses: updatedCourses });
+        } else if (updatedCourses.length > 0) {
+          dispatch({ type: 'UPDATE_ALL_COURSES', courses: updatedCourses });
+        }
+      }
+
+      for (const course of coursesToComplete) {
+        setTimeout(() => completeCourse(course), 0);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const saveGame = () => {
     try {

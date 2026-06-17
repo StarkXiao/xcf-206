@@ -69,23 +69,32 @@ function GameContent() {
       </footer>
 
       {showWelcome && (
-        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-[100] p-4">
-          <div className="bg-gradient-to-br from-purple-900 via-indigo-900 to-slate-900 rounded-2xl border-2 border-purple-500 max-w-2xl w-full p-8 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 text-[250px] opacity-5 leading-none select-none pointer-events-none">
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[9999] p-4 overflow-y-auto">
+          <div 
+            className="bg-gradient-to-br from-purple-900 via-indigo-900 to-slate-900 rounded-2xl border-2 border-purple-500 max-w-2xl w-full p-6 md:p-8 shadow-2xl relative overflow-hidden my-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShowWelcome(false)}
+              className="absolute top-3 right-4 text-gray-400 hover:text-white text-2xl z-50 w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition-all"
+            >
+              ✕
+            </button>
+            <div className="absolute top-0 right-0 text-[200px] md:text-[250px] opacity-5 leading-none select-none pointer-events-none">
               🏰
             </div>
             <div className="relative z-10">
               <div className="text-center mb-6">
-                <div className="text-7xl mb-4">✨🏰✨</div>
-                <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-pink-400 to-purple-400 mb-2">
+                <div className="text-6xl md:text-7xl mb-4">✨🏰✨</div>
+                <h1 className="text-2xl md:text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-pink-400 to-purple-400 mb-2">
                   欢迎来到魔法学院！
                 </h1>
-                <p className="text-purple-300 text-lg">
+                <p className="text-purple-300 text-base md:text-lg">
                   在这里，你将建立并经营一所属于自己的魔法学院
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3 mb-4 md:mb-6">
                 {[
                   { icon: '🏗️', title: '建设学院', desc: '建造各类魔法建筑' },
                   { icon: '🎓', title: '招募学员', desc: '收集各种天赋的法师' },
@@ -96,7 +105,7 @@ function GameContent() {
                 ].map((item, i) => (
                   <div
                     key={i}
-                    className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50"
+                    className="bg-slate-800/50 rounded-lg p-2 md:p-3 border border-slate-700/50"
                   >
                     <div className="text-2xl mb-1">{item.icon}</div>
                     <div className="text-sm font-bold text-white">{item.title}</div>
@@ -105,7 +114,7 @@ function GameContent() {
                 ))}
               </div>
 
-              <div className="bg-yellow-900/30 border border-yellow-500/50 rounded-xl p-4 mb-6">
+              <div className="bg-yellow-900/30 border border-yellow-500/50 rounded-xl p-3 md:p-4 mb-4 md:mb-6">
                 <div className="flex items-start gap-3">
                   <span className="text-2xl">💡</span>
                   <div className="text-sm text-yellow-200">
@@ -120,7 +129,7 @@ function GameContent() {
 
               <button
                 onClick={() => setShowWelcome(false)}
-                className="w-full py-4 rounded-xl font-bold text-xl bg-gradient-to-r from-yellow-500 via-pink-500 to-purple-500 hover:from-yellow-400 hover:via-pink-400 hover:to-purple-400 text-white shadow-2xl hover:shadow-purple-500/50 transition-all active:scale-[0.98]"
+                className="w-full py-3 md:py-4 rounded-xl font-bold text-lg md:text-xl bg-gradient-to-r from-yellow-500 via-pink-500 to-purple-500 hover:from-yellow-400 hover:via-pink-400 hover:to-purple-400 text-white shadow-2xl hover:shadow-purple-500/50 transition-all active:scale-[0.98]"
               >
                 🚀 开始我的魔法学院之旅！
               </button>
