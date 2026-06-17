@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react';
-import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus, PoolType, RecruitHistoryEntry, RecruitStats, PityCounter, Rarity, LimitedPoolEndTimes } from '../types/game';
-import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG, TIME_CONFIG, RECRUIT_POOL_DEFS } from '../data/gameData';
-import { levelUpStudent, generateId, getEfficiencyMultiplier, formatGameTime, createInitialPityCounters, createInitialRecruitStats, updatePityCounter } from '../utils/gameUtils';
+import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus, PoolType, RecruitHistoryEntry, RecruitStats, PityCounter, Rarity, LimitedPoolEndTimes, Equipment, Potion, MaterialType, CraftingJob, Recipe, EquipmentSlot, DungeonDifficulty } from '../types/game';
+import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG, TIME_CONFIG, RECRUIT_POOL_DEFS, INITIAL_MATERIALS, EQUIPMENT_DEFS, POTION_DEFS, RECIPES, BASE_STUDENT_STATS } from '../data/gameData';
+import { levelUpStudent, generateId, getEfficiencyMultiplier, formatGameTime, createInitialPityCounters, createInitialRecruitStats, updatePityCounter, calculateStudentStats, generateDungeonDrops } from '../utils/gameUtils';
 
 type GameAction =
   | { type: 'ADD_RESOURCES'; resources: Partial<Resources> }
@@ -35,7 +35,21 @@ type GameAction =
   | { type: 'UPDATE_RECRUIT_STATS'; stats: Partial<RecruitStats> }
   | { type: 'UPDATE_PITY_COUNTER'; poolId: PoolType; counter: PityCounter }
   | { type: 'BATCH_RECRUIT_UPDATE'; historyEntries: RecruitHistoryEntry[]; statsUpdate: Partial<RecruitStats>; pityUpdates: PityCounter[] }
-  | { type: 'SET_LIMITED_POOL_END_TIME'; poolId: PoolType; endTime: number | undefined };
+  | { type: 'SET_LIMITED_POOL_END_TIME'; poolId: PoolType; endTime: number | undefined }
+  | { type: 'ADD_EQUIPMENT'; equipment: Equipment }
+  | { type: 'REMOVE_EQUIPMENT'; equipmentId: string }
+  | { type: 'EQUIP_ITEM'; studentId: string; equipmentId: string; slot: EquipmentSlot }
+  | { type: 'UNEQUIP_ITEM'; studentId: string; slot: EquipmentSlot }
+  | { type: 'ADD_POTION'; potion: Potion }
+  | { type: 'USE_POTION'; potionId: string; studentId: string; quantity: number }
+  | { type: 'ADD_MATERIALS'; materials: Partial<Record<MaterialType, number>> }
+  | { type: 'SPEND_MATERIALS'; materials: Partial<Record<MaterialType, number>> }
+  | { type: 'START_CRAFTING'; job: CraftingJob }
+  | { type: 'COMPLETE_CRAFTING'; jobId: string }
+  | { type: 'CLAIM_CRAFTING'; jobId: string }
+  | { type: 'UPDATE_CRAFTING_JOBS' }
+  | { type: 'ADD_MULTIPLE_EQUIPMENT'; equipment: Equipment[] }
+  | { type: 'ADD_MULTIPLE_POTIONS'; potions: Potion[] };
 
 const STORAGE_KEY = 'magic_academy_save';
 
@@ -43,7 +57,7 @@ function createInitialLimitedPoolEndTimes(): LimitedPoolEndTimes {
   const endTimes: LimitedPoolEndTimes = {};
   const pools = Object.values(RECRUIT_POOL_DEFS).filter(p => p.isLimited && p.defaultDurationMs);
   for (const pool of pools) {
-    endTimes[pool.id as keyof LimitedPoolEndTimes] = Date.now() + pool.defaultDurationMs;
+    endTimes[pool.id as keyof LimitedPoolEndTimes] = Date.now() + (pool.defaultDurationMs || 0);
   }
   return endTimes;
 }
@@ -93,6 +107,10 @@ function createInitialState(): GameState {
     recruitStats: createInitialRecruitStats(),
     pityCounters: createInitialPityCounters(),
     limitedPoolEndTimes: createInitialLimitedPoolEndTimes(),
+    equipment: [],
+    potions: [],
+    materials: { ...INITIAL_MATERIALS },
+    craftingJobs: [],
   };
 }
 
@@ -463,6 +481,259 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case 'ADD_EQUIPMENT': {
+      return {
+        ...state,
+        equipment: [...state.equipment, action.equipment],
+      };
+    }
+
+    case 'ADD_MULTIPLE_EQUIPMENT': {
+      return {
+        ...state,
+        equipment: [...state.equipment, ...action.equipment],
+      };
+    }
+
+    case 'REMOVE_EQUIPMENT': {
+      return {
+        ...state,
+        equipment: state.equipment.filter((e) => e.id !== action.equipmentId),
+      };
+    }
+
+    case 'EQUIP_ITEM': {
+      const equipment = state.equipment.find((e) => e.id === action.equipmentId);
+      if (!equipment) return state;
+
+      const student = state.students.find((s) => s.id === action.studentId);
+      if (!student) return state;
+
+      const oldEquipmentId = student.equipment[action.slot];
+
+      const updatedEquipment = state.equipment.map((e) => {
+        if (e.id === action.equipmentId) {
+          return { ...e, isEquipped: true, equippedBy: action.studentId };
+        }
+        if (e.id === oldEquipmentId) {
+          return { ...e, isEquipped: false, equippedBy: undefined };
+        }
+        return e;
+      });
+
+      const updatedStudents = state.students.map((s) => {
+        if (s.id === action.studentId) {
+          const newEquipment = { ...s.equipment, [action.slot]: action.equipmentId };
+          const updatedStudent = { ...s, equipment: newEquipment };
+          const newStats = calculateStudentStats(updatedStudent, updatedEquipment, state.potions);
+          return { ...updatedStudent, stats: newStats };
+        }
+        return s;
+      });
+
+      return {
+        ...state,
+        equipment: updatedEquipment,
+        students: updatedStudents,
+      };
+    }
+
+    case 'UNEQUIP_ITEM': {
+      const student = state.students.find((s) => s.id === action.studentId);
+      if (!student) return state;
+
+      const equipmentId = student.equipment[action.slot];
+      if (!equipmentId) return state;
+
+      const updatedEquipment = state.equipment.map((e) =>
+        e.id === equipmentId ? { ...e, isEquipped: false, equippedBy: undefined } : e
+      );
+
+      const updatedStudents = state.students.map((s) => {
+        if (s.id === action.studentId) {
+          const newEquipment = { ...s.equipment, [action.slot]: null };
+          const updatedStudent = { ...s, equipment: newEquipment };
+          const newStats = calculateStudentStats(updatedStudent, updatedEquipment, state.potions);
+          return { ...updatedStudent, stats: newStats };
+        }
+        return s;
+      });
+
+      return {
+        ...state,
+        equipment: updatedEquipment,
+        students: updatedStudents,
+      };
+    }
+
+    case 'ADD_POTION': {
+      const existingPotion = state.potions.find((p) => p.defId === action.potion.defId && !p.isUsed);
+      if (existingPotion) {
+        return {
+          ...state,
+          potions: state.potions.map((p) =>
+            p.id === existingPotion.id ? { ...p, quantity: p.quantity + action.potion.quantity } : p
+          ),
+        };
+      }
+      return {
+        ...state,
+        potions: [...state.potions, action.potion],
+      };
+    }
+
+    case 'ADD_MULTIPLE_POTIONS': {
+      let updatedPotions = [...state.potions];
+      for (const potion of action.potions) {
+        const existing = updatedPotions.find((p) => p.defId === potion.defId && !p.isUsed);
+        if (existing) {
+          updatedPotions = updatedPotions.map((p) =>
+            p.id === existing.id ? { ...p, quantity: p.quantity + potion.quantity } : p
+          );
+        } else {
+          updatedPotions.push(potion);
+        }
+      }
+      return {
+        ...state,
+        potions: updatedPotions,
+      };
+    }
+
+    case 'USE_POTION': {
+      const potion = state.potions.find((p) => p.id === action.potionId);
+      if (!potion || potion.quantity < action.quantity || potion.isUsed) return state;
+
+      const student = state.students.find((s) => s.id === action.studentId);
+      if (!student) return state;
+
+      const potionDef = POTION_DEFS[potion.defId];
+      if (!potionDef) return state;
+
+      let updatedStudent = { ...student };
+      const newQuantity = potion.quantity - action.quantity;
+
+      if (potionDef.type === 'hp') {
+        const healAmount = (potionDef.effect.value || 0) * action.quantity;
+        const newHp = Math.min(updatedStudent.stats.maxHp, updatedStudent.stats.hp + healAmount);
+        updatedStudent.stats = { ...updatedStudent.stats, hp: newHp };
+      } else if (potionDef.type === 'fatigue') {
+        const recoverAmount = (potionDef.effect.value || 0) * action.quantity;
+        updatedStudent.fatigue = Math.max(0, updatedStudent.fatigue - recoverAmount);
+      } else if (potionDef.type === 'morale') {
+        const boostAmount = (potionDef.effect.value || 0) * action.quantity;
+        updatedStudent.morale = Math.min(100, updatedStudent.morale + boostAmount);
+      } else {
+        for (let i = 0; i < action.quantity; i++) {
+          updatedStudent.activePotions = [...updatedStudent.activePotions, potion.id];
+        }
+      }
+
+      const usedPotion: Potion = {
+        ...potion,
+        isUsed: true,
+        usedBy: action.studentId,
+        usedAt: Date.now(),
+        endTime: Date.now() + (potionDef.duration || 0),
+        quantity: 1,
+      };
+
+      const updatedPotions = state.potions.flatMap((p) => {
+        if (p.id !== action.potionId) return [p];
+        const result: Potion[] = [];
+        if (newQuantity > 0) {
+          result.push({ ...p, quantity: newQuantity });
+        }
+        for (let i = 0; i < action.quantity; i++) {
+          result.push({
+            ...usedPotion,
+            id: `${p.id}_used_${Date.now()}_${i}`,
+          });
+        }
+        return result;
+      });
+
+      const updatedStudents = state.students.map((s) =>
+        s.id === action.studentId ? updatedStudent : s
+      );
+
+      const recalculatedStudents = updatedStudents.map((s) => ({
+        ...s,
+        stats: calculateStudentStats(s, state.equipment, updatedPotions),
+      }));
+
+      return {
+        ...state,
+        potions: updatedPotions,
+        students: recalculatedStudents,
+      };
+    }
+
+    case 'ADD_MATERIALS': {
+      const newMaterials = { ...state.materials };
+      for (const [type, amount] of Object.entries(action.materials)) {
+        if (amount !== undefined) {
+          newMaterials[type as MaterialType] = (newMaterials[type as MaterialType] || 0) + amount;
+        }
+      }
+      return {
+        ...state,
+        materials: newMaterials,
+      };
+    }
+
+    case 'SPEND_MATERIALS': {
+      const newMaterials = { ...state.materials };
+      for (const [type, amount] of Object.entries(action.materials)) {
+        if (amount !== undefined) {
+          newMaterials[type as MaterialType] = Math.max(0, (newMaterials[type as MaterialType] || 0) - amount);
+        }
+      }
+      return {
+        ...state,
+        materials: newMaterials,
+      };
+    }
+
+    case 'START_CRAFTING': {
+      return {
+        ...state,
+        craftingJobs: [...state.craftingJobs, action.job],
+      };
+    }
+
+    case 'COMPLETE_CRAFTING': {
+      return {
+        ...state,
+        craftingJobs: state.craftingJobs.map((j) =>
+          j.id === action.jobId ? { ...j, completed: true } : j
+        ),
+      };
+    }
+
+    case 'CLAIM_CRAFTING': {
+      return {
+        ...state,
+        craftingJobs: state.craftingJobs.map((j) =>
+          j.id === action.jobId ? { ...j, claimed: true } : j
+        ),
+      };
+    }
+
+    case 'UPDATE_CRAFTING_JOBS': {
+      const now = Date.now();
+      const updatedJobs = state.craftingJobs.map((j) => {
+        if (!j.completed && now >= j.endTime) {
+          return { ...j, completed: true };
+        }
+        return j;
+      });
+      return {
+        ...state,
+        craftingJobs: updatedJobs,
+      };
+    }
+
     default:
       return state;
   }
@@ -494,6 +765,16 @@ interface GameContextType {
   batchRecruitUpdate: (historyEntries: RecruitHistoryEntry[], statsUpdate: Partial<RecruitStats>, pityUpdates: PityCounter[]) => void;
   getPoolEndTime: (poolId: PoolType) => number | undefined;
   resetLimitedPool: (poolId: PoolType) => void;
+  canAffordMaterials: (materials: Partial<Record<MaterialType, number>>) => boolean;
+  equipItem: (studentId: string, equipmentId: string, slot: EquipmentSlot) => void;
+  unequipItem: (studentId: string, slot: EquipmentSlot) => void;
+  usePotion: (potionId: string, studentId: string, quantity?: number) => void;
+  startCrafting: (recipe: Recipe) => void;
+  claimCrafting: (jobId: string) => void;
+  getAlchemyLevel: () => number;
+  addEquipment: (equipment: Equipment) => void;
+  addPotion: (potion: Potion) => void;
+  addMaterials: (materials: Partial<Record<MaterialType, number>>) => void;
 }
 
 const GameContext = createContext<GameContextType | null>(null);
@@ -508,6 +789,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
         ...s,
         fatigue: s.fatigue ?? 0,
         maxFatigue: s.maxFatigue ?? FATIGUE_CONFIG.BASE_MAX_FATIGUE + (s.level || 1) * FATIGUE_CONFIG.LEVEL_BONUS,
+        baseStats: s.baseStats || s.stats || { ...BASE_STUDENT_STATS },
+        equipment: s.equipment || { weapon: null, armor: null, accessory: null, relic: null },
+        activePotions: s.activePotions || [],
       })),
       schedule: savedState.schedule || {
         day: savedState.day || 1,
@@ -518,6 +802,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
       recruitStats: savedState.recruitStats || createInitialRecruitStats(),
       pityCounters: savedState.pityCounters || createInitialPityCounters(),
       limitedPoolEndTimes: savedState.limitedPoolEndTimes || createInitialLimitedPoolEndTimes(),
+      equipment: savedState.equipment || [],
+      potions: savedState.potions || [],
+      materials: savedState.materials || { ...INITIAL_MATERIALS },
+      craftingJobs: savedState.craftingJobs || [],
     };
     if (migrated.schedule.autoExecute === undefined) {
       migrated.schedule.autoExecute = true;
@@ -580,7 +868,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         morale: Math.max(0, student.morale - 5),
         fatigue: Math.min(student.maxFatigue, student.fatigue + fatigueCost),
       };
-      updatedStudent = levelUpStudent(updatedStudent);
+      updatedStudent = levelUpStudent(updatedStudent, currentState.equipment, currentState.potions);
 
       dispatch({ type: 'UPDATE_STUDENT', student: updatedStudent });
       dispatch({ type: 'UPDATE_ACADEMY_EXP', exp: Math.floor(totalExp / 5) });
@@ -990,6 +1278,108 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const canAffordMaterials = (materials: Partial<Record<MaterialType, number>>): boolean => {
+    for (const [type, amount] of Object.entries(materials)) {
+      if (amount !== undefined && (state.materials[type as MaterialType] || 0) < amount) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const getAlchemyLevel = (): number => {
+    const alchemyLab = state.buildings.find((b) => b.type === 'alchemy_lab');
+    return alchemyLab?.level || 0;
+  };
+
+  const equipItem = (studentId: string, equipmentId: string, slot: EquipmentSlot) => {
+    dispatch({ type: 'EQUIP_ITEM', studentId, equipmentId, slot });
+  };
+
+  const unequipItem = (studentId: string, slot: EquipmentSlot) => {
+    dispatch({ type: 'UNEQUIP_ITEM', studentId, slot });
+  };
+
+  const usePotion = (studentId: string, potionId: string, quantity: number = 1) => {
+    dispatch({ type: 'USE_POTION', studentId, potionId, quantity });
+  };
+
+  const startCrafting = (recipe: Recipe) => {
+    if (!canAfford(state.resources, { gold: recipe.goldCost, mana: recipe.manaCost })) return;
+    if (!canAffordMaterials(Object.fromEntries(recipe.materials.map((m) => [m.type, m.quantity])))) return;
+
+    dispatch({ type: 'SPEND_RESOURCES', resources: { gold: recipe.goldCost, mana: recipe.manaCost } });
+    dispatch({ type: 'SPEND_MATERIALS', materials: Object.fromEntries(recipe.materials.map((m) => [m.type, m.quantity])) });
+
+    const job: CraftingJob = {
+      id: generateId(),
+      recipeId: recipe.id,
+      startTime: Date.now(),
+      endTime: Date.now() + recipe.craftTime * 1000,
+      completed: false,
+      claimed: false,
+    };
+
+    dispatch({ type: 'START_CRAFTING', job });
+  };
+
+  const claimCrafting = (jobId: string) => {
+    const job = state.craftingJobs.find((j) => j.id === jobId);
+    if (!job || !job.completed || job.claimed) return;
+
+    const recipe = RECIPES.find((r) => r.id === job.recipeId);
+    if (!recipe) return;
+
+    if (recipe.type === 'equipment') {
+      const def = EQUIPMENT_DEFS[recipe.outputId];
+      if (def) {
+        for (let i = 0; i < recipe.outputQuantity; i++) {
+          const equipment: Equipment = {
+            id: generateId(),
+            defId: recipe.outputId,
+            slot: def.slot,
+            level: def.level,
+            isEquipped: false,
+            createdAt: Date.now(),
+          };
+          dispatch({ type: 'ADD_EQUIPMENT', equipment });
+        }
+      }
+    } else if (recipe.type === 'potion') {
+      const def = POTION_DEFS[recipe.outputId];
+      if (def) {
+        const potion: Potion = {
+          id: generateId(),
+          defId: recipe.outputId,
+          isUsed: false,
+          quantity: recipe.outputQuantity,
+        };
+        dispatch({ type: 'ADD_POTION', potion });
+      }
+    }
+
+    dispatch({ type: 'CLAIM_CRAFTING', jobId });
+  };
+
+  const addEquipment = (equipment: Equipment) => {
+    dispatch({ type: 'ADD_EQUIPMENT', equipment });
+  };
+
+  const addPotion = (potion: Potion) => {
+    dispatch({ type: 'ADD_POTION', potion });
+  };
+
+  const addMaterials = (materials: Partial<Record<MaterialType, number>>) => {
+    dispatch({ type: 'ADD_MATERIALS', materials });
+  };
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      dispatch({ type: 'UPDATE_CRAFTING_JOBS' });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   const contextValue: GameContextType = {
     state,
     dispatch,
@@ -1016,6 +1406,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
     batchRecruitUpdate,
     getPoolEndTime,
     resetLimitedPool,
+    canAffordMaterials,
+    equipItem,
+    unequipItem,
+    usePotion,
+    startCrafting,
+    claimCrafting,
+    getAlchemyLevel,
+    addEquipment,
+    addPotion,
+    addMaterials,
   };
 
   return <GameContext.Provider value={contextValue}>{children}</GameContext.Provider>;

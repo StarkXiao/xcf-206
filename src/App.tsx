@@ -7,6 +7,8 @@ import { ConstructionModule } from './components/ConstructionModule';
 import { RecruitmentModule } from './components/RecruitmentModule';
 import { CourseModule } from './components/CourseModule';
 import { DungeonModule } from './components/DungeonModule';
+import { AlchemyModule } from './components/AlchemyModule';
+import { EquipmentModule } from './components/EquipmentModule';
 import { ScheduleModule } from './components/ScheduleModule';
 import { SettlementModule } from './components/SettlementModule';
 import { SettingsModule } from './components/SettingsModule';
@@ -38,6 +40,10 @@ function GameContent() {
         return <RecruitmentModule />;
       case 'courses':
         return <CourseModule />;
+      case 'alchemy':
+        return <AlchemyModule />;
+      case 'equipment':
+        return <EquipmentModule />;
       case 'dungeon':
         return <DungeonModule />;
       case 'schedule':

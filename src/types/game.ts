@@ -78,6 +78,7 @@ export interface Student {
   exp: number;
   element: ElementType;
   stats: StudentStats;
+  baseStats: StudentStats;
   skills: string[];
   avatar: string;
   status: 'idle' | 'studying' | 'training' | 'dungeon' | 'resting';
@@ -86,6 +87,8 @@ export interface Student {
   morale: number;
   fatigue: number;
   maxFatigue: number;
+  equipment: Record<EquipmentSlot, string | null>;
+  activePotions: string[];
 }
 
 export interface CourseDef {
@@ -199,6 +202,10 @@ export interface GameState {
   recruitStats: RecruitStats;
   pityCounters: PityCounter[];
   limitedPoolEndTimes: LimitedPoolEndTimes;
+  equipment: Equipment[];
+  potions: Potion[];
+  materials: Record<MaterialType, number>;
+  craftingJobs: CraftingJob[];
 }
 
 export type ActivityType = 
@@ -303,4 +310,118 @@ export type ModuleType =
   | 'dungeon'
   | 'settlement'
   | 'schedule'
-  | 'settings';
+  | 'settings'
+  | 'equipment'
+  | 'alchemy';
+
+export type EquipmentSlot = 'weapon' | 'armor' | 'accessory' | 'relic';
+
+export type EquipmentType = 'weapon' | 'armor' | 'accessory' | 'relic';
+
+export type PotionType = 'hp' | 'attack' | 'defense' | 'magic' | 'speed' | 'crit' | 'fatigue' | 'morale';
+
+export type MaterialType = 
+  | 'wood' | 'herb' | 'stone' | 'crystal' | 'gem'
+  | 'fire_crystal' | 'ember' | 'dragon_scale'
+  | 'dark_crystal' | 'soul_stone' | 'dragon_heart'
+  | 'iron_ore' | 'magic_thread' | 'ancient_rune';
+
+export interface EquipmentDef {
+  name: string;
+  type: EquipmentType;
+  slot: EquipmentSlot;
+  rarity: Rarity;
+  level: number;
+  stats: Partial<StudentStats>;
+  bonuses: Partial<StudentStats>;
+  description: string;
+  icon: string;
+  element?: ElementType;
+  setBonus?: string;
+}
+
+export interface Equipment {
+  id: string;
+  defId: string;
+  slot: EquipmentSlot;
+  level: number;
+  isEquipped: boolean;
+  equippedBy?: string;
+  createdAt: number;
+}
+
+export interface PotionDef {
+  name: string;
+  type: PotionType;
+  rarity: Rarity;
+  effect: Partial<StudentStats> & { duration?: number; value?: number };
+  effectType: 'buff' | 'heal';
+  effectValue: number;
+  duration: number;
+  description: string;
+  icon: string;
+}
+
+export interface Potion {
+  id: string;
+  defId: string;
+  isUsed: boolean;
+  usedBy?: string;
+  usedAt?: number;
+  endTime?: number;
+  quantity: number;
+}
+
+export interface Material {
+  type: MaterialType;
+  name: string;
+  icon: string;
+  description: string;
+  quantity: number;
+}
+
+export interface Recipe {
+  id: string;
+  name: string;
+  type: 'equipment' | 'potion';
+  outputId: string;
+  outputQuantity: number;
+  materials: { type: MaterialType; quantity: number }[];
+  goldCost: number;
+  manaCost: number;
+  craftTime: number;
+  requiredAlchemyLevel: number;
+  icon: string;
+}
+
+export interface CraftingJob {
+  id: string;
+  recipeId: string;
+  startTime: number;
+  endTime: number;
+  completed: boolean;
+  claimed: boolean;
+}
+
+export interface EquipmentInventory {
+  items: Equipment[];
+}
+
+export interface PotionInventory {
+  items: Potion[];
+}
+
+export interface MaterialInventory {
+  materials: Record<MaterialType, number>;
+}
+
+export interface DungeonResult {
+  victory: boolean;
+  rewards: Resources;
+  materials: { [key: string]: number };
+  expGained: number;
+  survivors: string[];
+  battleLog: BattleLogEntry[];
+  equipmentDrops: Equipment[];
+  potionDrops: Potion[];
+}

@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useGame } from '../context/GameContext';
-import { DUNGEON_DEFS, DIFFICULTY_NAMES, DIFFICULTY_COLORS, RARITY_COLORS, ELEMENT_ICONS, ELEMENT_NAMES, ELEMENT_COLORS } from '../data/gameData';
-import { Student, DungeonDef, BattleUnit, BattleLogEntry, Enemy } from '../types/game';
-import { simulateBattle, formatNumber, levelUpStudent, getFatigueLevel, getFatigueLevelColor, calculateDungeonFatigueCost } from '../utils/gameUtils';
+import { DUNGEON_DEFS, DIFFICULTY_NAMES, DIFFICULTY_COLORS, RARITY_COLORS, RARITY_NAMES, ELEMENT_ICONS, ELEMENT_NAMES, ELEMENT_COLORS, EQUIPMENT_DEFS, POTION_DEFS, MATERIAL_DEFS } from '../data/gameData';
+import { Student, DungeonDef, BattleUnit, BattleLogEntry, Enemy, Equipment, Potion } from '../types/game';
+import { simulateBattle, formatNumber, levelUpStudent, getFatigueLevel, getFatigueLevelColor, calculateDungeonFatigueCost, generateDungeonDrops } from '../utils/gameUtils';
 
 interface Props {}
 
@@ -16,7 +16,14 @@ export function DungeonModule({}: Props) {
     enemyUnits: BattleUnit[];
     log: BattleLogEntry[];
     currentTurn: number;
-    result: { victory: boolean; expGained: number; survivors: string[] } | null;
+    result: {
+      victory: boolean;
+      expGained: number;
+      survivors: string[];
+      equipmentDrops: Equipment[];
+      potionDrops: Potion[];
+      materialDrops: { type: string; quantity: number }[];
+    } | null;
   } | null>(null);
   const [animating, setAnimating] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
@@ -169,6 +176,20 @@ export function DungeonModule({}: Props) {
     rewardBonus: number,
     players: Student[]
   ) => {
+    let equipmentDrops: Equipment[] = [];
+    let potionDrops: Potion[] = [];
+    let materialDrops: { type: string; quantity: number }[] = [];
+
+    if (result.victory && selectedDungeon) {
+      const drops = generateDungeonDrops(selectedDungeon.difficulty, result.victory);
+      equipmentDrops = drops.equipment;
+      potionDrops = drops.potions;
+      materialDrops = Object.entries(drops.materials).map(([type, quantity]) => ({
+        type,
+        quantity: quantity || 0,
+      }));
+    }
+
     setBattleState((prev) => {
       if (!prev || !selectedDungeon) return prev;
       return {
@@ -178,6 +199,9 @@ export function DungeonModule({}: Props) {
           victory: result.victory,
           expGained: result.expGained,
           survivors: result.survivors,
+          equipmentDrops,
+          potionDrops,
+          materialDrops,
         },
       };
     });
@@ -194,12 +218,22 @@ export function DungeonModule({}: Props) {
       dispatch({ type: 'ADD_RESOURCES', resources: rewards });
       dispatch({ type: 'UPDATE_ACADEMY_EXP', exp: Math.floor(result.expGained / 3) });
 
+      for (const equipment of equipmentDrops) {
+        dispatch({ type: 'ADD_EQUIPMENT', equipment });
+      }
+      for (const potion of potionDrops) {
+        dispatch({ type: 'ADD_POTION', potion });
+      }
+      for (const mat of materialDrops) {
+        dispatch({ type: 'ADD_MATERIALS', materials: { [mat.type]: mat.quantity } });
+      }
+
       const expPerSurvivor = Math.floor(result.expGained / Math.max(1, result.survivors.length));
       for (const survivorId of result.survivors) {
         const student = state.students.find((s) => s.id === survivorId);
         if (student) {
           let updated = { ...student, exp: student.exp + expPerSurvivor };
-          updated = levelUpStudent(updated);
+          updated = levelUpStudent(updated, state.equipment, state.potions);
           dispatch({ type: 'UPDATE_STUDENT', student: updated });
         }
       }
@@ -354,7 +388,13 @@ export function DungeonModule({}: Props) {
                       💠 {dungeon.rewards.crystals}
                     </span>
                     <span className="bg-green-900/30 px-2 py-0.5 rounded text-green-400 text-xs">
-                      📦 {dungeon.rewards.materials}
+                      📦 材料
+                    </span>
+                    <span className="bg-orange-900/30 px-2 py-0.5 rounded text-orange-400 text-xs">
+                      ⚔️ 装备
+                    </span>
+                    <span className="bg-pink-900/30 px-2 py-0.5 rounded text-pink-400 text-xs">
+                      🧪 药剂
                     </span>
                   </div>
                 </div>
@@ -578,7 +618,7 @@ export function DungeonModule({}: Props) {
                     {battleState.result.victory && (
                       <div>
                         <p className="text-lg text-green-300 mb-4">获得经验 {battleState.result.expGained} 点</p>
-                        <div className="flex flex-wrap justify-center gap-2">
+                        <div className="flex flex-wrap justify-center gap-2 mb-4">
                           <span className="bg-yellow-900/50 px-3 py-1.5 rounded-lg text-yellow-300">
                             💰 +{formatNumber(selectedDungeon.rewards.gold)}
                           </span>
@@ -588,11 +628,73 @@ export function DungeonModule({}: Props) {
                           <span className="bg-purple-900/50 px-3 py-1.5 rounded-lg text-purple-300">
                             💠 +{selectedDungeon.rewards.crystals}
                           </span>
-                          <span className="bg-green-900/50 px-3 py-1.5 rounded-lg text-green-300">
-                            📦 +{selectedDungeon.rewards.materials}
-                          </span>
                         </div>
-                        <p className="text-sm text-gray-400 mt-4">
+
+                        {(battleState.result.equipmentDrops.length > 0 ||
+                          battleState.result.potionDrops.length > 0 ||
+                          battleState.result.materialDrops.length > 0) && (
+                          <div className="mb-4">
+                            <h4 className="text-sm text-yellow-400 mb-2 font-bold">✨ 额外掉落</h4>
+
+                            {battleState.result.materialDrops.length > 0 && (
+                              <div className="flex flex-wrap justify-center gap-2 mb-2">
+                                {battleState.result.materialDrops.map((mat, i) => {
+                                  const def = MATERIAL_DEFS[mat.type as keyof typeof MATERIAL_DEFS];
+                                  return (
+                                    <span
+                                      key={i}
+                                      className="bg-green-900/50 px-3 py-1.5 rounded-lg text-green-300"
+                                    >
+                                      {def?.icon} {def?.name} x{mat.quantity}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {battleState.result.equipmentDrops.length > 0 && (
+                              <div className="flex flex-wrap justify-center gap-2 mb-2">
+                                {battleState.result.equipmentDrops.map((equip) => {
+                                  const def = EQUIPMENT_DEFS[equip.defId];
+                                  return (
+                                    <span
+                                      key={equip.id}
+                                      className="px-3 py-1.5 rounded-lg text-sm font-bold"
+                                      style={{
+                                        background: RARITY_COLORS[def.rarity] + '30',
+                                        color: RARITY_COLORS[def.rarity],
+                                      }}
+                                    >
+                                      {def.icon} {def.name} (+{equip.level})
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {battleState.result.potionDrops.length > 0 && (
+                              <div className="flex flex-wrap justify-center gap-2">
+                                {battleState.result.potionDrops.map((potion) => {
+                                  const def = POTION_DEFS[potion.defId];
+                                  return (
+                                    <span
+                                      key={potion.id}
+                                      className="px-3 py-1.5 rounded-lg text-sm font-bold"
+                                      style={{
+                                        background: RARITY_COLORS[def.rarity] + '30',
+                                        color: RARITY_COLORS[def.rarity],
+                                      }}
+                                    >
+                                      {def.icon} {def.name}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <p className="text-sm text-gray-400">
                           幸存者: {battleState.result.survivors.length} / {battleState.playerUnits.length}
                         </p>
                       </div>

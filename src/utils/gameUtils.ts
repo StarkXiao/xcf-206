@@ -1,4 +1,4 @@
-import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType, TimeOfDay, PoolType, PityCounter, RecruitHistoryEntry, RecruitStats } from '../types/game';
+import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType, TimeOfDay, PoolType, PityCounter, RecruitHistoryEntry, RecruitStats, Equipment, Potion, EquipmentSlot, MaterialType, DungeonDifficulty } from '../types/game';
 import {
   RARITY_WEIGHTS,
   RARITY_MULTIPLIERS,
@@ -13,6 +13,9 @@ import {
   TIME_CONFIG,
   RECRUIT_POOL_DEFS,
   POOL_RARITY_WEIGHTS,
+  EQUIPMENT_DEFS,
+  POTION_DEFS,
+  DUNGEON_DROP_RATES,
 } from '../data/gameData';
 
 export function pickRandom<T>(arr: T[]): T {
@@ -73,7 +76,8 @@ export function generateStudentStats(rarity: Rarity, element: ElementType): Stud
 export function generateStudent(): Student {
   const rarity = weightedRandomRarity();
   const element = randomElement();
-  const stats = generateStudentStats(rarity, element);
+  const baseStats = generateStudentStats(rarity, element);
+  const stats = { ...baseStats };
   const skills: string[] = [];
   const elementSkills = SKILLS.filter((s) => s.element === element);
   if (elementSkills.length > 0) {
@@ -96,6 +100,7 @@ export function generateStudent(): Student {
     exp: 0,
     element,
     stats,
+    baseStats,
     skills,
     avatar: pickRandom(AVATARS),
     status: 'idle',
@@ -103,6 +108,8 @@ export function generateStudent(): Student {
     morale: 100,
     fatigue: 0,
     maxFatigue,
+    equipment: { weapon: null, armor: null, accessory: null, relic: null },
+    activePotions: [],
   };
 }
 
@@ -236,7 +243,7 @@ export function getExpToNextLevel(level: number): number {
   return level * 100 + Math.pow(level, 2) * 20;
 }
 
-export function levelUpStudent(student: Student): Student {
+export function levelUpStudent(student: Student, equipment: Equipment[] = [], potions: Potion[] = []): Student {
   let exp = student.exp;
   let level = student.level;
   let expNeeded = getExpToNextLevel(level);
@@ -248,29 +255,35 @@ export function levelUpStudent(student: Student): Student {
   const levelDiff = level - student.level;
   if (levelDiff > 0) {
     const statGain: StudentStats = {
-      hp: Math.floor(student.stats.maxHp * 0.1 * levelDiff),
-      maxHp: Math.floor(student.stats.maxHp * 0.1 * levelDiff),
-      attack: Math.floor(student.stats.attack * 0.08 * levelDiff),
-      defense: Math.floor(student.stats.defense * 0.08 * levelDiff),
-      magic: Math.floor(student.stats.magic * 0.08 * levelDiff),
-      speed: Math.floor(student.stats.speed * 0.05 * levelDiff),
-      critRate: Math.floor(student.stats.critRate * 0.05 * levelDiff),
-      critDamage: Math.floor(student.stats.critDamage * 0.05 * levelDiff),
+      hp: Math.floor(student.baseStats.maxHp * 0.1 * levelDiff),
+      maxHp: Math.floor(student.baseStats.maxHp * 0.1 * levelDiff),
+      attack: Math.floor(student.baseStats.attack * 0.08 * levelDiff),
+      defense: Math.floor(student.baseStats.defense * 0.08 * levelDiff),
+      magic: Math.floor(student.baseStats.magic * 0.08 * levelDiff),
+      speed: Math.floor(student.baseStats.speed * 0.05 * levelDiff),
+      critRate: Math.floor(student.baseStats.critRate * 0.05 * levelDiff),
+      critDamage: Math.floor(student.baseStats.critDamage * 0.05 * levelDiff),
     };
-    return {
+    const newBaseStats: StudentStats = {
+      hp: student.baseStats.hp + statGain.hp,
+      maxHp: student.baseStats.maxHp + statGain.maxHp,
+      attack: student.baseStats.attack + statGain.attack,
+      defense: student.baseStats.defense + statGain.defense,
+      magic: student.baseStats.magic + statGain.magic,
+      speed: student.baseStats.speed + statGain.speed,
+      critRate: student.baseStats.critRate + statGain.critRate,
+      critDamage: student.baseStats.critDamage + statGain.critDamage,
+    };
+    const updatedStudent = {
       ...student,
       level,
       exp,
-      stats: {
-        hp: student.stats.hp + statGain.hp,
-        maxHp: student.stats.maxHp + statGain.maxHp,
-        attack: student.stats.attack + statGain.attack,
-        defense: student.stats.defense + statGain.defense,
-        magic: student.stats.magic + statGain.magic,
-        speed: student.stats.speed + statGain.speed,
-        critRate: student.stats.critRate + statGain.critRate,
-        critDamage: student.stats.critDamage + statGain.critDamage,
-      },
+      baseStats: newBaseStats,
+    };
+    const newStats = calculateStudentStats(updatedStudent, equipment, potions);
+    return {
+      ...updatedStudent,
+      stats: newStats,
     };
   }
   return { ...student, exp };
@@ -544,7 +557,8 @@ export function generateStudentForPool(poolId: PoolType, pityCounter: PityCounte
     element = poolDef.rateUp.element;
   }
 
-  const stats = generateStudentStats(rarity, element);
+  const baseStats = generateStudentStats(rarity, element);
+  const stats = { ...baseStats };
   const skills: string[] = [];
   const elementSkills = SKILLS.filter((s) => s.element === element);
   if (elementSkills.length > 0) {
@@ -568,6 +582,7 @@ export function generateStudentForPool(poolId: PoolType, pityCounter: PityCounte
     exp: 0,
     element,
     stats,
+    baseStats,
     skills,
     avatar: pickRandom(AVATARS),
     status: 'idle',
@@ -575,6 +590,8 @@ export function generateStudentForPool(poolId: PoolType, pityCounter: PityCounte
     morale: 100,
     fatigue: 0,
     maxFatigue,
+    equipment: { weapon: null, armor: null, accessory: null, relic: null },
+    activePotions: [],
   };
 
   return { student, isPity, isRateUp };
@@ -639,4 +656,199 @@ export function isPoolActive(poolId: PoolType, endTime?: number): boolean {
   if (!poolDef.isLimited) return true;
   if (!endTime) return true;
   return Date.now() < endTime;
+}
+
+export function calculateStudentStats(
+  student: Student,
+  equipmentList: Equipment[],
+  potionList: Potion[]
+): StudentStats {
+  const baseStats = { ...student.baseStats };
+
+  const equippedItems = equipmentList.filter((e) => e.isEquipped && e.equippedBy === student.id);
+  for (const equip of equippedItems) {
+    const def = EQUIPMENT_DEFS[equip.defId];
+    if (def) {
+      for (const [stat, value] of Object.entries(def.bonuses)) {
+        if (stat in baseStats && value !== undefined) {
+          (baseStats as Record<string, number>)[stat] += value;
+        }
+      }
+    }
+  }
+
+  const activePotions = potionList.filter((p) => student.activePotions.includes(p.id) && p.isUsed);
+  for (const potion of activePotions) {
+    const def = POTION_DEFS[potion.defId];
+    if (def) {
+      for (const [stat, value] of Object.entries(def.effect)) {
+        if (stat === 'duration' || stat === 'value') continue;
+        if (stat in baseStats && value !== undefined && typeof value === 'number') {
+          (baseStats as Record<string, number>)[stat] += value;
+        }
+      }
+    }
+  }
+
+  baseStats.hp = Math.min(baseStats.hp, baseStats.maxHp);
+
+  return baseStats;
+}
+
+export function createEquipmentFromDef(defId: string): Equipment | null {
+  const def = EQUIPMENT_DEFS[defId];
+  if (!def) return null;
+  return {
+    id: generateId(),
+    defId,
+    slot: def.slot,
+    level: def.level,
+    isEquipped: false,
+    createdAt: Date.now(),
+  };
+}
+
+export function createPotionFromDef(defId: string, quantity: number = 1): Potion | null {
+  const def = POTION_DEFS[defId];
+  if (!def) return null;
+  return {
+    id: generateId(),
+    defId,
+    isUsed: false,
+    quantity,
+  };
+}
+
+export function generateRandomEquipment(difficulty: DungeonDifficulty): Equipment | null {
+  const rarityPool: Rarity[] = (() => {
+    switch (difficulty) {
+      case 'easy':
+        return ['common', 'common', 'common', 'uncommon'];
+      case 'normal':
+        return ['common', 'uncommon', 'uncommon', 'rare'];
+      case 'hard':
+        return ['uncommon', 'rare', 'rare', 'epic'];
+      case 'nightmare':
+        return ['rare', 'epic', 'epic', 'legendary'];
+      default:
+        return ['common'];
+    }
+  })();
+
+  const targetRarity = pickRandom(rarityPool);
+  const availableDefs = Object.entries(EQUIPMENT_DEFS).filter(([_, def]) => def.rarity === targetRarity);
+  if (availableDefs.length === 0) return null;
+
+  const [defId] = pickRandom(availableDefs);
+  return createEquipmentFromDef(defId);
+}
+
+export function generateRandomPotion(difficulty: DungeonDifficulty): Potion | null {
+  const rarityPool: Rarity[] = (() => {
+    switch (difficulty) {
+      case 'easy':
+        return ['common', 'common', 'uncommon'];
+      case 'normal':
+        return ['common', 'uncommon', 'uncommon', 'rare'];
+      case 'hard':
+        return ['uncommon', 'rare', 'rare', 'epic'];
+      case 'nightmare':
+        return ['rare', 'epic', 'epic', 'legendary'];
+      default:
+        return ['common'];
+    }
+  })();
+
+  const targetRarity = pickRandom(rarityPool);
+  const availableDefs = Object.entries(POTION_DEFS).filter(([_, def]) => def.rarity === targetRarity);
+  if (availableDefs.length === 0) return null;
+
+  const [defId] = pickRandom(availableDefs);
+  return createPotionFromDef(defId, randomInt(1, 3));
+}
+
+export function generateDungeonDrops(
+  difficulty: DungeonDifficulty,
+  victory: boolean
+): { equipment: Equipment[]; potions: Potion[]; materials: Partial<Record<MaterialType, number>> } {
+  if (!victory) {
+    return { equipment: [], potions: [], materials: {} };
+  }
+
+  const dropRates = DUNGEON_DROP_RATES[difficulty];
+  const equipment: Equipment[] = [];
+  const potions: Potion[] = [];
+  const materials: Partial<Record<MaterialType, number>> = {};
+
+  if (Math.random() < dropRates.equipment) {
+    const count = randomInt(1, difficulty === 'nightmare' ? 2 : 1);
+    for (let i = 0; i < count; i++) {
+      const equip = generateRandomEquipment(difficulty);
+      if (equip) equipment.push(equip);
+    }
+  }
+
+  if (Math.random() < dropRates.potion) {
+    const count = randomInt(1, 2);
+    for (let i = 0; i < count; i++) {
+      const potion = generateRandomPotion(difficulty);
+      if (potion) potions.push(potion);
+    }
+  }
+
+  const materialTypes: MaterialType[] = ['wood', 'herb', 'stone', 'crystal', 'gem', 'iron_ore', 'magic_thread'];
+  const rareMaterials: Record<string, MaterialType[]> = {
+    easy: [],
+    normal: ['fire_crystal', 'ember'],
+    hard: ['fire_crystal', 'ember', 'dark_crystal', 'ancient_rune'],
+    nightmare: ['dragon_scale', 'soul_stone', 'dragon_heart', 'dark_crystal'],
+  };
+
+  for (const type of materialTypes) {
+    if (Math.random() < dropRates.material) {
+      materials[type] = randomInt(1, 5) * (difficulty === 'easy' ? 1 : difficulty === 'normal' ? 2 : 3);
+    }
+  }
+
+  const rareList = rareMaterials[difficulty] || [];
+  for (const type of rareList) {
+    if (Math.random() < 0.3) {
+      materials[type] = randomInt(1, difficulty === 'nightmare' ? 3 : 1);
+    }
+  }
+
+  return { equipment, potions, materials };
+}
+
+export function formatCraftTime(seconds: number): string {
+  if (seconds < 60) return `${seconds}秒`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (minutes < 60) return `${minutes}分${secs > 0 ? secs + '秒' : ''}`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}小时${mins > 0 ? mins + '分' : ''}`;
+}
+
+export function getRemainingCraftTime(endTime: number): string {
+  const remaining = Math.max(0, endTime - Date.now());
+  if (remaining <= 0) return '已完成';
+  return formatCraftTime(Math.floor(remaining / 1000));
+}
+
+export function getEquipmentSlotIcon(slot: EquipmentSlot): string {
+  const icons: Record<EquipmentSlot, string> = {
+    weapon: '⚔️',
+    armor: '🛡️',
+    accessory: '💍',
+    relic: '🔮',
+  };
+  return icons[slot];
+}
+
+export function getSetBonusPieces(equipment: Equipment[], setName: string): number {
+  return equipment.filter((e) => {
+    const def = EQUIPMENT_DEFS[e.defId];
+    return def && def.setBonus === setName && e.isEquipped;
+  }).length;
 }
