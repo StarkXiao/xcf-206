@@ -1,20 +1,21 @@
 import { useState, useMemo } from 'react';
 import { useGame } from '../context/GameContext';
-import { Student, PoolType, RecruitHistoryEntry, PityCounter, RecruitStats } from '../types/game';
-import { RARITY_COLORS, RARITY_NAMES, ELEMENT_COLORS, ELEMENT_NAMES, ELEMENT_ICONS, RECRUIT_POOL_DEFS, POOL_RARITY_WEIGHTS, CLASS_DEFS, CLASS_TIER_NAMES, CLASS_TIER_COLORS } from '../data/gameData';
-import { formatNumber, generateStudentForPool, generateStudentForPoolWithClass, updatePityCounter, getPoolRemainingTime, isPoolActive } from '../utils/gameUtils';
+import { Student, PoolType, RecruitHistoryEntry, PityCounter, RecruitStats, BondPairDef } from '../types/game';
+import { RARITY_COLORS, RARITY_NAMES, ELEMENT_COLORS, ELEMENT_NAMES, ELEMENT_ICONS, RECRUIT_POOL_DEFS, POOL_RARITY_WEIGHTS, CLASS_DEFS, CLASS_TIER_NAMES, CLASS_TIER_COLORS, BOND_PAIR_DEFS, BOND_LEVEL_NAMES, BOND_LEVEL_COLORS } from '../data/gameData';
+import { formatNumber, generateStudentForPool, generateStudentForPoolWithClass, updatePityCounter, getPoolRemainingTime, isPoolActive, findMatchingBondPairs } from '../utils/gameUtils';
 import { ClassPromotionModal } from './ClassPromotionModal';
 
 interface RecruitResult {
   student: Student;
   isPity: boolean;
   isRateUp: boolean;
+  bondPairs?: { pair: BondPairDef; otherStudent: Student }[];
 }
 
 type TabType = 'pools' | 'history' | 'stats';
 
 export function RecruitmentModule() {
-  const { state, dispatch, getStudentCapacity, canAfford, batchRecruitUpdate, getPoolEndTime, resetLimitedPool, getAvailablePromotions } = useGame();
+  const { state, dispatch, getStudentCapacity, canAfford, batchRecruitUpdate, getPoolEndTime, resetLimitedPool, getAvailablePromotions, addBondExp, createBond, findMatchingBondPairs: ctxFindMatchingBondPairs } = useGame();
   const [selectedPool, setSelectedPool] = useState<PoolType>('standard');
   const [recruitedResults, setRecruitedResults] = useState<RecruitResult[]>([]);
   const [showResults, setShowResults] = useState(false);
@@ -68,6 +69,7 @@ export function RecruitmentModule() {
       const results: RecruitResult[] = [];
       const historyEntries: RecruitHistoryEntry[] = [];
       let updatedCounters = [...state.pityCounters];
+      let currentStudents = [...state.students];
       const statsUpdate: Partial<RecruitStats> = {
         totalPulls: stats.totalPulls + actualCount,
         totalGold: stats.totalGold + (cost.gold || 0),
@@ -81,28 +83,83 @@ export function RecruitmentModule() {
         const poolCounter = updatedCounters.find((c) => c.poolId === selectedPool)!;
         const { student, isPity, isRateUp } = generateStudentForPoolWithClass(selectedPool, poolCounter);
 
-        results.push({ student, isPity, isRateUp });
-        dispatch({ type: 'ADD_STUDENT', student });
+        let finalStudent = { ...student };
+        const bondPairs: { pair: BondPairDef; otherStudent: Student }[] = [];
 
-        statsUpdate.rarityCount![student.rarity] = (statsUpdate.rarityCount![student.rarity] || 0) + 1;
+        for (const existingStudent of currentStudents) {
+          const pairs = findMatchingBondPairs(finalStudent, existingStudent);
+          for (const pair of pairs) {
+            bondPairs.push({ pair, otherStudent: existingStudent });
+            
+            if (pair.recruitBonus) {
+              switch (pair.recruitBonus.type) {
+                case 'stat_boost':
+                  const boostMultiplier = 1 + pair.recruitBonus.value / 100;
+                  finalStudent = {
+                    ...finalStudent,
+                    stats: {
+                      ...finalStudent.stats,
+                      maxHp: Math.floor(finalStudent.stats.maxHp * boostMultiplier),
+                      attack: Math.floor(finalStudent.stats.attack * boostMultiplier),
+                      defense: Math.floor(finalStudent.stats.defense * boostMultiplier),
+                      magic: Math.floor(finalStudent.stats.magic * boostMultiplier),
+                      speed: Math.floor(finalStudent.stats.speed * boostMultiplier),
+                    },
+                    baseStats: {
+                      ...finalStudent.baseStats,
+                      maxHp: Math.floor(finalStudent.baseStats.maxHp * boostMultiplier),
+                      attack: Math.floor(finalStudent.baseStats.attack * boostMultiplier),
+                      defense: Math.floor(finalStudent.baseStats.defense * boostMultiplier),
+                      magic: Math.floor(finalStudent.baseStats.magic * boostMultiplier),
+                      speed: Math.floor(finalStudent.baseStats.speed * boostMultiplier),
+                    },
+                  };
+                  break;
+                case 'exp_boost':
+                  finalStudent = {
+                    ...finalStudent,
+                    exp: finalStudent.exp + Math.floor(pair.recruitBonus.value * 10),
+                  };
+                  break;
+                case 'morale_boost':
+                  finalStudent = {
+                    ...finalStudent,
+                    morale: Math.min(100, finalStudent.morale + pair.recruitBonus.value),
+                  };
+                  break;
+              }
+            }
+          }
+        }
+
+        results.push({ student: finalStudent, isPity, isRateUp, bondPairs: bondPairs.length > 0 ? bondPairs : undefined });
+        dispatch({ type: 'ADD_STUDENT', student: finalStudent });
+        currentStudents.push(finalStudent);
+
+        for (const { otherStudent, pair } of bondPairs) {
+          createBond(finalStudent.id, otherStudent.id);
+          addBondExp(finalStudent.id, otherStudent.id, 50);
+        }
+
+        statsUpdate.rarityCount![finalStudent.rarity] = (statsUpdate.rarityCount![finalStudent.rarity] || 0) + 1;
         if (isPity) statsUpdate.pityTriggered! += 1;
         if (isRateUp) statsUpdate.rateUpHits! += 1;
 
         historyEntries.push({
-          id: student.id,
+          id: finalStudent.id,
           poolId: selectedPool,
-          studentId: student.id,
-          studentName: student.name,
-          rarity: student.rarity,
-          element: student.element,
-          avatar: student.avatar,
+          studentId: finalStudent.id,
+          studentName: finalStudent.name,
+          rarity: finalStudent.rarity,
+          element: finalStudent.element,
+          avatar: finalStudent.avatar,
           cost: { gold: Math.floor((cost.gold || 0) / actualCount), crystals: Math.floor((cost.crystals || 0) / actualCount) },
           timestamp: Date.now(),
           isPity,
           isRateUp,
         });
 
-        const newCounter = updatePityCounter(poolCounter, selectedPool, student.rarity);
+        const newCounter = updatePityCounter(poolCounter, selectedPool, finalStudent.rarity);
         updatedCounters = updatedCounters.map((c) =>
           c.poolId === selectedPool ? newCounter : c
         );
@@ -122,7 +179,7 @@ export function RecruitmentModule() {
     }
   };
 
-  const renderStudentCard = (student: Student, isNew: boolean = false, isPity: boolean = false, isRateUp: boolean = false) => (
+  const renderStudentCard = (student: Student, isNew: boolean = false, isPity: boolean = false, isRateUp: boolean = false, bondPairs?: { pair: BondPairDef; otherStudent: Student }[]) => (
     <div
       key={student.id}
       className={`relative rounded-xl overflow-hidden border-2 transition-all hover:scale-[1.02] ${
@@ -202,6 +259,27 @@ export function RecruitmentModule() {
             </span>
           ))}
         </div>
+
+        {bondPairs && bondPairs.length > 0 && (
+          <div className="mb-2 p-2 bg-pink-900/30 rounded-lg border border-pink-500/30">
+            <div className="text-xs font-bold text-pink-300 mb-1 flex items-center gap-1">
+              <span>💞</span> 羁绊组合达成！
+            </div>
+            {bondPairs.map(({ pair, otherStudent }, idx) => (
+              <div key={idx} className="text-[10px] text-pink-200 flex items-center gap-1">
+                <span>{pair.icon}</span>
+                <span className="font-bold">{pair.name}</span>
+                <span className="text-pink-400">与</span>
+                <span style={{ color: RARITY_COLORS[otherStudent.rarity] }}>{otherStudent.name}</span>
+                {pair.recruitBonus && (
+                  <span className="text-green-400 ml-1">
+                    {pair.recruitBonus.description}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="flex items-center justify-between">
           <div className="text-xs text-gray-400">
@@ -736,7 +814,7 @@ export function RecruitmentModule() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {recruitedResults.map((r) => renderStudentCard(r.student, true, r.isPity, r.isRateUp))}
+              {recruitedResults.map((r) => renderStudentCard(r.student, true, r.isPity, r.isRateUp, r.bondPairs))}
             </div>
           </div>
         </div>

@@ -12,6 +12,7 @@ import { EquipmentModule } from './components/EquipmentModule';
 import { ScheduleModule } from './components/ScheduleModule';
 import { SettlementModule } from './components/SettlementModule';
 import { SettingsModule } from './components/SettingsModule';
+import { BondPanel } from './components/BondPanel';
 import { ModuleType } from './types/game';
 import './App.css';
 
@@ -52,6 +53,8 @@ function GameContent() {
         return <SettlementModule />;
       case 'settings':
         return <SettingsModule />;
+      case 'bonds':
+        return <BondPanel />;
       default:
         return <OverviewModule onNavigate={setCurrentModule} />;
     }

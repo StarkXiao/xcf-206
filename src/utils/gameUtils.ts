@@ -1,4 +1,4 @@
-import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType, TimeOfDay, PoolType, PityCounter, RecruitHistoryEntry, RecruitStats, Equipment, Potion, EquipmentSlot, MaterialType, DungeonDifficulty, CourseMastery, MasteryLevel, StudentClass, ClassDef, CourseType, CourseDef, ClassPromotion } from '../types/game';
+import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType, TimeOfDay, PoolType, PityCounter, RecruitHistoryEntry, RecruitStats, Equipment, Potion, EquipmentSlot, MaterialType, DungeonDifficulty, CourseMastery, MasteryLevel, StudentClass, ClassDef, CourseType, CourseDef, ClassPromotion, BondLevel, BondRelation, BondPairDef, BondBonus } from '../types/game';
 import {
   RARITY_WEIGHTS,
   RARITY_MULTIPLIERS,
@@ -19,6 +19,12 @@ import {
   MASTERY_CONFIG,
   CLASS_DEFS,
   COURSE_DEFS,
+  BOND_PAIR_DEFS,
+  BOND_CONFIG,
+  BOND_EXP_PER_LEVEL,
+  BOND_LEVEL_NAMES,
+  BOND_LEVEL_COLORS,
+  BOND_LEVEL_ICONS,
 } from '../data/gameData';
 
 export function pickRandom<T>(arr: T[]): T {
@@ -806,7 +812,8 @@ export function generateRandomPotion(difficulty: DungeonDifficulty): Potion | nu
 
 export function generateDungeonDrops(
   difficulty: DungeonDifficulty,
-  victory: boolean
+  victory: boolean,
+  dropRateMultiplier: number = 1
 ): { equipment: Equipment[]; potions: Potion[]; materials: Partial<Record<MaterialType, number>> } {
   if (!victory) {
     return { equipment: [], potions: [], materials: {} };
@@ -817,7 +824,7 @@ export function generateDungeonDrops(
   const potions: Potion[] = [];
   const materials: Partial<Record<MaterialType, number>> = {};
 
-  if (Math.random() < dropRates.equipment) {
+  if (Math.random() < Math.min(1, dropRates.equipment * dropRateMultiplier)) {
     const count = randomInt(1, difficulty === 'nightmare' ? 2 : 1);
     for (let i = 0; i < count; i++) {
       const equip = generateRandomEquipment(difficulty);
@@ -825,7 +832,7 @@ export function generateDungeonDrops(
     }
   }
 
-  if (Math.random() < dropRates.potion) {
+  if (Math.random() < Math.min(1, dropRates.potion * dropRateMultiplier)) {
     const count = randomInt(1, 2);
     for (let i = 0; i < count; i++) {
       const potion = generateRandomPotion(difficulty);
@@ -842,14 +849,14 @@ export function generateDungeonDrops(
   };
 
   for (const type of materialTypes) {
-    if (Math.random() < dropRates.material) {
+    if (Math.random() < Math.min(1, dropRates.material * dropRateMultiplier)) {
       materials[type] = randomInt(1, 5) * (difficulty === 'easy' ? 1 : difficulty === 'normal' ? 2 : 3);
     }
   }
 
   const rareList = rareMaterials[difficulty] || [];
   for (const type of rareList) {
-    if (Math.random() < 0.3) {
+    if (Math.random() < Math.min(1, 0.3 * dropRateMultiplier)) {
       materials[type] = randomInt(1, difficulty === 'nightmare' ? 3 : 1);
     }
   }
@@ -1216,4 +1223,211 @@ export function generateStudentForPoolWithClass(poolId: PoolType, pityCounter: P
     availableForPromotion: false,
   };
   return { ...result, student: studentWithClass };
+}
+
+const BOND_LEVELS: BondLevel[] = ['stranger', 'acquaintance', 'friend', 'close_friend', 'soulmate'];
+
+export function getBondLevelIndex(level: BondLevel): number {
+  return BOND_LEVELS.indexOf(level);
+}
+
+export function getBondLevelFromIndex(index: number): BondLevel {
+  return BOND_LEVELS[Math.max(0, Math.min(BOND_LEVELS.length - 1, index))];
+}
+
+export function getBondExpToNext(level: BondLevel): number {
+  const idx = getBondLevelIndex(level);
+  if (idx >= BOND_LEVELS.length - 1) return 999999;
+  return BOND_EXP_PER_LEVEL[BOND_LEVELS[idx + 1]] || 100;
+}
+
+export function createBondRelation(studentId1: string, studentId2: string): BondRelation {
+  return {
+    id: `${studentId1}_${studentId2}`,
+    studentId1,
+    studentId2,
+    level: 'stranger',
+    exp: 0,
+    expToNext: getBondExpToNext('stranger'),
+    totalInteractions: 0,
+    lastInteractionTime: 0,
+    unlockedBonuses: [],
+  };
+}
+
+export function getBondRelation(bonds: BondRelation[], studentId1: string, studentId2: string): BondRelation | null {
+  return bonds.find(b => 
+    (b.studentId1 === studentId1 && b.studentId2 === studentId2) ||
+    (b.studentId1 === studentId2 && b.studentId2 === studentId1)
+  ) || null;
+}
+
+export function addBondExp(bond: BondRelation, exp: number): { bond: BondRelation; leveledUp: boolean; newLevel: BondLevel } {
+  let newExp = bond.exp + exp;
+  let newLevelIndex = getBondLevelIndex(bond.level);
+  let leveledUp = false;
+  let newLevel = bond.level;
+
+  while (newLevelIndex < BOND_LEVELS.length - 1 && newExp >= getBondExpToNext(getBondLevelFromIndex(newLevelIndex))) {
+    newExp -= getBondExpToNext(getBondLevelFromIndex(newLevelIndex));
+    newLevelIndex++;
+    leveledUp = true;
+  }
+
+  if (leveledUp) {
+    newLevel = getBondLevelFromIndex(newLevelIndex);
+  }
+
+  const updatedBond: BondRelation = {
+    ...bond,
+    exp: newLevelIndex >= BOND_LEVELS.length - 1 ? getBondExpToNext('soulmate') : newExp,
+    level: newLevel,
+    expToNext: getBondExpToNext(newLevel),
+    totalInteractions: bond.totalInteractions + 1,
+    lastInteractionTime: Date.now(),
+  };
+
+  return { bond: updatedBond, leveledUp, newLevel };
+}
+
+export function checkBondPairMatch(student1: Student, student2: Student, pairDef: BondPairDef): boolean {
+  const { requiredElement1, requiredElement2, requiredClass1, requiredClass2 } = pairDef;
+  
+  if (requiredElement1 && student1.element !== requiredElement1) return false;
+  if (requiredElement2 && student2.element !== requiredElement2) return false;
+  
+  if (requiredClass1 && student1.class !== requiredClass1) return false;
+  if (requiredClass2 && student2.class !== requiredClass2) return false;
+  
+  return true;
+}
+
+export function findMatchingBondPairs(student1: Student, student2: Student): BondPairDef[] {
+  const matches: BondPairDef[] = [];
+  
+  for (const pairDef of Object.values(BOND_PAIR_DEFS)) {
+    if (checkBondPairMatch(student1, student2, pairDef)) {
+      matches.push(pairDef);
+    } else if (checkBondPairMatch(student2, student1, pairDef)) {
+      matches.push(pairDef);
+    }
+  }
+  
+  return matches;
+}
+
+export function calculateBondBonuses(student: Student, bonds: BondRelation[], allStudents: Student[]): BondBonus {
+  const bonus: BondBonus = {
+    statBonuses: {},
+    expBonus: 0,
+    goldBonus: 0,
+    dropRateBonus: 0,
+    moraleBonus: 0,
+    fatigueRecoveryBonus: 0,
+  };
+
+  const studentBonds = bonds.filter(b => 
+    b.studentId1 === student.id || b.studentId2 === student.id
+  );
+
+  for (const bond of studentBonds) {
+    const otherStudentId = bond.studentId1 === student.id ? bond.studentId2 : bond.studentId1;
+    const otherStudent = allStudents.find(s => s.id === otherStudentId);
+    if (!otherStudent) continue;
+
+    const matchingPairs = findMatchingBondPairs(student, otherStudent);
+    
+    for (const pair of matchingPairs) {
+      const bondLevelIndex = getBondLevelIndex(bond.level);
+      
+      for (const bonusDef of pair.bonuses) {
+        const bonusLevelIndex = getBondLevelIndex(bonusDef.level);
+        if (bondLevelIndex < bonusLevelIndex) continue;
+
+        const isTargeted = bonusDef.target === 'both' || 
+          (bonusDef.target === 'student1' && bond.studentId1 === student.id) ||
+          (bonusDef.target === 'student2' && bond.studentId2 === student.id);
+        
+        if (!isTargeted) continue;
+
+        switch (bonusDef.type) {
+          case 'stat':
+            if (bonusDef.stat) {
+              const current = bonus.statBonuses[bonusDef.stat] || 0;
+              bonus.statBonuses[bonusDef.stat] = current + bonusDef.value;
+            }
+            break;
+          case 'exp':
+            bonus.expBonus += bonusDef.value;
+            break;
+          case 'gold':
+            bonus.goldBonus += bonusDef.value;
+            break;
+          case 'drop_rate':
+            bonus.dropRateBonus += bonusDef.value;
+            break;
+          case 'morale':
+            bonus.moraleBonus += bonusDef.value;
+            break;
+          case 'fatigue_recovery':
+            bonus.fatigueRecoveryBonus += bonusDef.value;
+            break;
+        }
+      }
+    }
+  }
+
+  return bonus;
+}
+
+export function calculateTeamBondBonus(teamStudentIds: string[], bonds: BondRelation[], allStudents: Student[]): {
+  totalStatBonus: Partial<StudentStats>;
+  expBonus: number;
+  dropRateBonus: number;
+  activeBonds: number;
+} {
+  const totalStatBonus: Partial<StudentStats> = {
+    maxHp: 0, attack: 0, defense: 0, magic: 0, speed: 0,
+    critRate: 0, critDamage: 0,
+  };
+  let expBonus = 0;
+  let dropRateBonus = 0;
+  let activeBonds = 0;
+
+  for (let i = 0; i < teamStudentIds.length; i++) {
+    for (let j = i + 1; j < teamStudentIds.length; j++) {
+      const bond = getBondRelation(bonds, teamStudentIds[i], teamStudentIds[j]);
+      if (!bond) continue;
+      
+      const student1 = allStudents.find(s => s.id === teamStudentIds[i]);
+      const student2 = allStudents.find(s => s.id === teamStudentIds[j]);
+      if (!student1 || !student2) continue;
+
+      const matchingPairs = findMatchingBondPairs(student1, student2);
+      if (matchingPairs.length === 0) continue;
+
+      activeBonds++;
+      const bondLevelIndex = getBondLevelIndex(bond.level);
+      const levelMultiplier = 1 + bondLevelIndex * 0.2;
+
+      for (const stat of Object.keys(totalStatBonus) as (keyof StudentStats)[]) {
+        const baseValue = (totalStatBonus[stat] || 0);
+        const bondValue = Math.floor(BOND_CONFIG.DUNGEON_BOND_STAT_BOOST * 100 * levelMultiplier);
+        totalStatBonus[stat] = baseValue + bondValue;
+      }
+
+      expBonus += Math.floor(BOND_CONFIG.CLASS_BOND_EXP_BOOST * 100 * levelMultiplier);
+      dropRateBonus += Math.floor(5 * levelMultiplier);
+    }
+  }
+
+  return { totalStatBonus, expBonus, dropRateBonus, activeBonds };
+}
+
+export function getStudentBondCount(studentId: string, bonds: BondRelation[]): number {
+  return bonds.filter(b => b.studentId1 === studentId || b.studentId2 === studentId).length;
+}
+
+export function getStudentBonds(studentId: string, bonds: BondRelation[]): BondRelation[] {
+  return bonds.filter(b => b.studentId1 === studentId || b.studentId2 === studentId);
 }

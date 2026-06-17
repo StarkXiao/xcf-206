@@ -1414,3 +1414,217 @@ export const POTION_TYPE_NAMES: Record<string, string> = {
   fatigue: '精力',
   morale: '士气',
 };
+
+export const BOND_LEVEL_NAMES: Record<string, string> = {
+  stranger: '陌生人',
+  acquaintance: '相识',
+  friend: '朋友',
+  close_friend: '挚友',
+  soulmate: '羁绊',
+};
+
+export const BOND_LEVEL_COLORS: Record<string, string> = {
+  stranger: '#9CA3AF',
+  acquaintance: '#10B981',
+  friend: '#3B82F6',
+  close_friend: '#8B5CF6',
+  soulmate: '#F59E0B',
+};
+
+export const BOND_LEVEL_ICONS: Record<string, string> = {
+  stranger: '💔',
+  acquaintance: '🤝',
+  friend: '👫',
+  close_friend: '💚',
+  soulmate: '💛',
+};
+
+export const BOND_EXP_PER_LEVEL: Record<string, number> = {
+  stranger: 0,
+  acquaintance: 50,
+  friend: 200,
+  close_friend: 500,
+  soulmate: 1000,
+};
+
+export const BOND_CONFIG = {
+  EXP_PER_CLASS_MINUTE: 0.5,
+  EXP_PER_DUNGEON_VICTORY: 50,
+  EXP_PER_RECRUIT_TOGETHER: 100,
+  MAX_LEVEL_BONUS_MULTIPLIER: 2.0,
+  DUNGEON_BOND_STAT_BOOST: 0.05,
+  CLASS_BOND_EXP_BOOST: 0.1,
+};
+
+export const BOND_PAIR_DEFS: Record<string, import('../types/game').BondPairDef> = {
+  fire_warrior_mage: {
+    id: 'fire_warrior_mage',
+    name: '炎之双壁',
+    description: '火焰战士与法师的完美搭档，攻防一体',
+    icon: '🔥',
+    rarity: 'epic',
+    requiredElement1: 'fire',
+    requiredElement2: 'fire',
+    requiredClass1: 'warrior',
+    requiredClass2: 'mage',
+    bonuses: [
+      { level: 'acquaintance', type: 'stat', target: 'both', stat: 'attack', value: 5, description: '双方攻击力+5' },
+      { level: 'friend', type: 'stat', target: 'both', stat: 'magic', value: 8, description: '双方魔力+8' },
+      { level: 'close_friend', type: 'exp', target: 'both', value: 15, description: '双方经验获取+15%' },
+      { level: 'soulmate', type: 'stat', target: 'both', stat: 'critDamage', value: 20, description: '双方暴击伤害+20%' },
+    ],
+    recruitBonus: {
+      type: 'stat_boost',
+      value: 10,
+      description: '同时招募时初始属性+10%',
+    },
+  },
+  light_cleric_warrior: {
+    id: 'light_cleric_warrior',
+    name: '圣光守护',
+    description: '牧师与战士的神圣组合，守护与力量并存',
+    icon: '✨',
+    rarity: 'epic',
+    requiredElement1: 'light',
+    requiredElement2: 'light',
+    requiredClass1: 'cleric',
+    requiredClass2: 'warrior',
+    bonuses: [
+      { level: 'acquaintance', type: 'stat', target: 'both', stat: 'defense', value: 8, description: '双方防御+8' },
+      { level: 'friend', type: 'stat', target: 'both', stat: 'maxHp', value: 30, description: '双方最大生命+30' },
+      { level: 'close_friend', type: 'morale', target: 'both', value: 10, description: '双方士气上限+10' },
+      { level: 'soulmate', type: 'fatigue_recovery', target: 'both', value: 20, description: '双方疲劳恢复+20%' },
+    ],
+    recruitBonus: {
+      type: 'morale_boost',
+      value: 20,
+      description: '同时招募时初始士气+20',
+    },
+  },
+  dark_assassin_warlock: {
+    id: 'dark_assassin_warlock',
+    name: '暗影双煞',
+    description: '刺客与术士的黑暗组合，致命的暗影之力',
+    icon: '🌙',
+    rarity: 'legendary',
+    requiredElement1: 'dark',
+    requiredElement2: 'dark',
+    requiredClass1: 'assassin',
+    requiredClass2: 'warlock',
+    bonuses: [
+      { level: 'acquaintance', type: 'stat', target: 'both', stat: 'attack', value: 10, description: '双方攻击+10' },
+      { level: 'friend', type: 'stat', target: 'both', stat: 'critRate', value: 5, description: '双方暴击率+5%' },
+      { level: 'close_friend', type: 'stat', target: 'both', stat: 'magic', value: 15, description: '双方魔力+15' },
+      { level: 'soulmate', type: 'drop_rate', target: 'both', value: 15, description: '双方副本掉落率+15%' },
+    ],
+    recruitBonus: {
+      type: 'exp_boost',
+      value: 15,
+      description: '同时招募时初始经验+15%',
+    },
+  },
+  wind_archer_ranger: {
+    id: 'wind_archer_ranger',
+    name: '疾风射手',
+    description: '弓箭手与游侠的风之组合，迅捷无比',
+    icon: '🌪️',
+    rarity: 'rare',
+    requiredElement1: 'wind',
+    requiredElement2: 'wind',
+    requiredClass1: 'archer',
+    requiredClass2: 'ranger',
+    bonuses: [
+      { level: 'acquaintance', type: 'stat', target: 'both', stat: 'speed', value: 8, description: '双方速度+8' },
+      { level: 'friend', type: 'stat', target: 'both', stat: 'critRate', value: 3, description: '双方暴击率+3%' },
+      { level: 'close_friend', type: 'exp', target: 'both', value: 10, description: '双方经验获取+10%' },
+      { level: 'soulmate', type: 'stat', target: 'both', stat: 'attack', value: 12, description: '双方攻击+12' },
+    ],
+    recruitBonus: {
+      type: 'stat_boost',
+      value: 8,
+      description: '同时招募时速度+8%',
+    },
+  },
+  earth_defense_pair: {
+    id: 'earth_defense_pair',
+    name: '大地壁垒',
+    description: '大地属性学员的坚固组合，稳如磐石',
+    icon: '🌍',
+    rarity: 'rare',
+    requiredElement1: 'earth',
+    requiredElement2: 'earth',
+    bonuses: [
+      { level: 'acquaintance', type: 'stat', target: 'both', stat: 'defense', value: 10, description: '双方防御+10' },
+      { level: 'friend', type: 'stat', target: 'both', stat: 'maxHp', value: 50, description: '双方最大生命+50' },
+      { level: 'close_friend', type: 'gold', target: 'both', value: 10, description: '双方金币获取+10%' },
+      { level: 'soulmate', type: 'fatigue_recovery', target: 'both', value: 15, description: '双方疲劳恢复+15%' },
+    ],
+    recruitBonus: {
+      type: 'stat_boost',
+      value: 12,
+      description: '同时招募时初始防御+12%',
+    },
+  },
+  water_support_pair: {
+    id: 'water_support_pair',
+    name: '清泉之愈',
+    description: '水属性学员的治愈组合，生生不息',
+    icon: '💧',
+    rarity: 'rare',
+    requiredElement1: 'water',
+    requiredElement2: 'water',
+    bonuses: [
+      { level: 'acquaintance', type: 'stat', target: 'both', stat: 'maxHp', value: 25, description: '双方最大生命+25' },
+      { level: 'friend', type: 'morale', target: 'both', value: 5, description: '双方士气+5' },
+      { level: 'close_friend', type: 'fatigue_recovery', target: 'both', value: 12, description: '双方疲劳恢复+12%' },
+      { level: 'soulmate', type: 'stat', target: 'both', stat: 'defense', value: 10, description: '双方防御+10' },
+    ],
+    recruitBonus: {
+      type: 'morale_boost',
+      value: 15,
+      description: '同时招募时初始士气+15',
+    },
+  },
+  sage_paladin_holy: {
+    id: 'sage_paladin_holy',
+    name: '神圣双翼',
+    description: '贤者与圣骑士的传说组合，光明力量的极致',
+    icon: '👼',
+    rarity: 'legendary',
+    requiredElement1: 'light',
+    requiredElement2: 'light',
+    requiredClass1: 'sage',
+    requiredClass2: 'paladin',
+    bonuses: [
+      { level: 'acquaintance', type: 'stat', target: 'both', stat: 'magic', value: 20, description: '双方魔力+20' },
+      { level: 'friend', type: 'stat', target: 'both', stat: 'defense', value: 15, description: '双方防御+15' },
+      { level: 'close_friend', type: 'exp', target: 'both', value: 20, description: '双方经验获取+20%' },
+      { level: 'soulmate', type: 'drop_rate', target: 'both', value: 25, description: '双方副本掉落率+25%' },
+    ],
+    recruitBonus: {
+      type: 'exp_boost',
+      value: 25,
+      description: '同时招募时初始经验+25%',
+    },
+  },
+  fire_water_opposites: {
+    id: 'fire_water_opposites',
+    name: '水火交融',
+    description: '火与水的对立统一，激发出意想不到的力量',
+    icon: '☯️',
+    rarity: 'epic',
+    requiredElement1: 'fire',
+    requiredElement2: 'water',
+    bonuses: [
+      { level: 'acquaintance', type: 'stat', target: 'both', stat: 'attack', value: 8, description: '双方攻击+8' },
+      { level: 'friend', type: 'stat', target: 'both', stat: 'magic', value: 10, description: '双方魔力+10' },
+      { level: 'close_friend', type: 'stat', target: 'both', stat: 'critDamage', value: 15, description: '双方暴击伤害+15%' },
+      { level: 'soulmate', type: 'exp', target: 'both', value: 18, description: '双方经验获取+18%' },
+    ],
+    recruitBonus: {
+      type: 'stat_boost',
+      value: 10,
+      description: '同时招募时全属性+5%',
+    },
+  },
+};

@@ -302,6 +302,8 @@ export interface GameState {
   promotionQuests: PromotionQuest[];
   totalPromotions: number;
   totalMasteryGrandmasters: number;
+  bonds: BondRelation[];
+  totalBondsFormed: number;
 }
 
 export type ActivityType = 
@@ -408,7 +410,8 @@ export type ModuleType =
   | 'schedule'
   | 'settings'
   | 'equipment'
-  | 'alchemy';
+  | 'alchemy'
+  | 'bonds';
 
 export type EquipmentSlot = 'weapon' | 'armor' | 'accessory' | 'relic';
 
@@ -520,4 +523,54 @@ export interface DungeonResult {
   battleLog: BattleLogEntry[];
   equipmentDrops: Equipment[];
   potionDrops: Potion[];
+}
+
+export type BondLevel = 'stranger' | 'acquaintance' | 'friend' | 'close_friend' | 'soulmate';
+
+export interface BondRelation {
+  id: string;
+  studentId1: string;
+  studentId2: string;
+  level: BondLevel;
+  exp: number;
+  expToNext: number;
+  totalInteractions: number;
+  lastInteractionTime: number;
+  unlockedBonuses: string[];
+}
+
+export interface BondPairDef {
+  id: string;
+  student1Id?: string;
+  student2Id?: string;
+  name: string;
+  description: string;
+  icon: string;
+  rarity: Rarity;
+  requiredElement1?: ElementType;
+  requiredElement2?: ElementType;
+  requiredClass1?: StudentClass;
+  requiredClass2?: StudentClass;
+  bonuses: {
+    level: BondLevel;
+    type: 'stat' | 'exp' | 'gold' | 'drop_rate' | 'morale' | 'fatigue_recovery';
+    target: 'both' | 'student1' | 'student2';
+    stat?: keyof StudentStats;
+    value: number;
+    description: string;
+  }[];
+  recruitBonus?: {
+    type: 'exp_boost' | 'morale_boost' | 'stat_boost';
+    value: number;
+    description: string;
+  };
+}
+
+export interface BondBonus {
+  statBonuses: Partial<StudentStats>;
+  expBonus: number;
+  goldBonus: number;
+  dropRateBonus: number;
+  moraleBonus: number;
+  fatigueRecoveryBonus: number;
 }

@@ -1,6 +1,6 @@
 import { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react';
-import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus, PoolType, RecruitHistoryEntry, RecruitStats, PityCounter, Rarity, LimitedPoolEndTimes, Equipment, Potion, MaterialType, CraftingJob, Recipe, EquipmentSlot, DungeonDifficulty, StudentClass, PromotionQuest, ClassPromotion, CourseMastery, MasteryLevel, ClassDef, CourseDef } from '../types/game';
-import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG, TIME_CONFIG, RECRUIT_POOL_DEFS, INITIAL_MATERIALS, EQUIPMENT_DEFS, POTION_DEFS, RECIPES, BASE_STUDENT_STATS, CLASS_DEFS, MASTERY_CONFIG } from '../data/gameData';
+import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus, PoolType, RecruitHistoryEntry, RecruitStats, PityCounter, Rarity, LimitedPoolEndTimes, Equipment, Potion, MaterialType, CraftingJob, Recipe, EquipmentSlot, DungeonDifficulty, StudentClass, PromotionQuest, ClassPromotion, CourseMastery, MasteryLevel, ClassDef, CourseDef, BondRelation, BondBonus } from '../types/game';
+import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG, TIME_CONFIG, RECRUIT_POOL_DEFS, INITIAL_MATERIALS, EQUIPMENT_DEFS, POTION_DEFS, RECIPES, BASE_STUDENT_STATS, CLASS_DEFS, MASTERY_CONFIG, BOND_PAIR_DEFS, BOND_CONFIG, BOND_LEVEL_NAMES, BOND_LEVEL_COLORS, BOND_LEVEL_ICONS } from '../data/gameData';
 import { 
   levelUpStudent, generateId, getEfficiencyMultiplier, formatGameTime, createInitialPityCounters, 
   createInitialRecruitStats, updatePityCounter, calculateStudentStats, generateDungeonDrops, 
@@ -10,7 +10,11 @@ import {
   masteryLevelMeetsRequirement, createStudentWithMasteryAndClass, getAvailablePromotions as utilsGetAvailablePromotions, 
   calculateMasterySettlementBonus as utilsCalculateMasterySettlementBonus, 
   calculateClassSettlementBonus as utilsCalculateClassSettlementBonus, 
-  canAccessCourse as utilsCanAccessCourse, getMasteryLevelIndex 
+  canAccessCourse as utilsCanAccessCourse, getMasteryLevelIndex,
+  createBondRelation as utilsCreateBondRelation, getBondRelation as utilsGetBondRelation, 
+  addBondExp as utilsAddBondExp, findMatchingBondPairs as utilsFindMatchingBondPairs,
+  calculateBondBonuses as utilsCalculateBondBonuses, calculateTeamBondBonus as utilsCalculateTeamBondBonus, 
+  getStudentBondCount as utilsGetStudentBondCount, getStudentBonds as utilsGetStudentBonds
 } from '../utils/gameUtils';
 
 type GameAction =
@@ -68,7 +72,11 @@ type GameAction =
   | { type: 'COMPLETE_PROMOTION_QUEST'; questId: string; studentId: string; targetClass: StudentClass }
   | { type: 'UPDATE_PROMOTION_QUEST'; questId: string; stepId: string; current: number }
   | { type: 'UPDATE_STUDENT_MASTERY'; studentId: string; mastery: CourseMastery }
-  | { type: 'CHECK_PROMOTION_AVAILABILITY'; studentId: string };
+  | { type: 'CHECK_PROMOTION_AVAILABILITY'; studentId: string }
+  | { type: 'ADD_BOND_EXP'; studentId1: string; studentId2: string; exp: number }
+  | { type: 'CREATE_BOND'; studentId1: string; studentId2: string }
+  | { type: 'UPDATE_BOND'; bond: BondRelation }
+  | { type: 'BATCH_UPDATE_BONDS'; bonds: BondRelation[] };
 
 const STORAGE_KEY = 'magic_academy_save';
 
@@ -133,6 +141,8 @@ function createInitialState(): GameState {
     promotionQuests: [],
     totalPromotions: 0,
     totalMasteryGrandmasters: 0,
+    bonds: [],
+    totalBondsFormed: 0,
   };
 }
 
@@ -995,6 +1005,65 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case 'CREATE_BOND': {
+      const existingBond = state.bonds.find(b =>
+        (b.studentId1 === action.studentId1 && b.studentId2 === action.studentId2) ||
+        (b.studentId1 === action.studentId2 && b.studentId2 === action.studentId1)
+      );
+      if (existingBond) return state;
+
+      const student1 = state.students.find(s => s.id === action.studentId1);
+      const student2 = state.students.find(s => s.id === action.studentId2);
+      if (!student1 || !student2) return state;
+
+      const newBond = utilsCreateBondRelation(action.studentId1, action.studentId2);
+      return {
+        ...state,
+        bonds: [...state.bonds, newBond],
+        totalBondsFormed: state.totalBondsFormed + 1,
+      };
+    }
+
+    case 'ADD_BOND_EXP': {
+      let bond = utilsGetBondRelation(state.bonds, action.studentId1, action.studentId2);
+      let newBonds = [...state.bonds];
+      let newTotalBonds = state.totalBondsFormed;
+
+      if (!bond) {
+        bond = utilsCreateBondRelation(action.studentId1, action.studentId2);
+        newBonds.push(bond);
+        newTotalBonds += 1;
+      }
+
+      const { bond: updatedBond } = utilsAddBondExp(bond, action.exp);
+      newBonds = newBonds.map(b => 
+        b.id === bond!.id || 
+        (b.studentId1 === bond!.studentId1 && b.studentId2 === bond!.studentId2) || 
+        (b.studentId1 === bond!.studentId2 && b.studentId2 === bond!.studentId1) 
+          ? updatedBond : b
+      );
+
+      return {
+        ...state,
+        bonds: newBonds,
+        totalBondsFormed: newTotalBonds,
+      };
+    }
+
+    case 'UPDATE_BOND': {
+      return {
+        ...state,
+        bonds: state.bonds.map(b => b.id === action.bond.id ? action.bond : b),
+      };
+    }
+
+    case 'BATCH_UPDATE_BONDS': {
+      return {
+        ...state,
+        bonds: action.bonds,
+      };
+    }
+
     default:
       return state;
   }
@@ -1046,6 +1115,14 @@ interface GameContextType {
   calculateMasterySettlementBonus: (student: Student) => { gold: number; exp: number; mana: number };
   calculateClassSettlementBonus: (student: Student) => { gold: number; exp: number; mana: number };
   canAccessCourse: (student: Student, courseDef: CourseDef) => { canAccess: boolean; reasons: string[] };
+  addBondExp: (studentId1: string, studentId2: string, exp: number) => void;
+  createBond: (studentId1: string, studentId2: string) => void;
+  getStudentBonds: (studentId: string) => BondRelation[];
+  getBondRelation: (studentId1: string, studentId2: string) => BondRelation | null;
+  calculateBondBonuses: (studentId: string) => BondBonus;
+  calculateTeamBondBonus: (teamStudentIds: string[]) => { totalStatBonus: Partial<Student['stats']>; expBonus: number; dropRateBonus: number; activeBonds: number };
+  findMatchingBondPairs: (studentId1: string, studentId2: string) => import('../types/game').BondPairDef[];
+  getStudentBondCount: (studentId: string) => number;
 }
 
 const GameContext = createContext<GameContextType | null>(null);
@@ -1088,6 +1165,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       promotionQuests: savedState.promotionQuests || [],
       totalPromotions: savedState.totalPromotions || 0,
       totalMasteryGrandmasters: savedState.totalMasteryGrandmasters || 0,
+      bonds: savedState.bonds || [],
+      totalBondsFormed: savedState.totalBondsFormed || 0,
     };
     if (migrated.schedule.autoExecute === undefined) {
       migrated.schedule.autoExecute = true;
@@ -1173,6 +1252,20 @@ export function GameProvider({ children }: { children: ReactNode }) {
       }
 
       completedStudentIds.push(studentId);
+    }
+
+    if (completedStudentIds.length >= 2) {
+      const bondExpPerPair = Math.floor(def.duration * BOND_CONFIG.EXP_PER_CLASS_MINUTE / 60);
+      for (let i = 0; i < completedStudentIds.length; i++) {
+        for (let j = i + 1; j < completedStudentIds.length; j++) {
+          dispatch({
+            type: 'ADD_BOND_EXP',
+            studentId1: completedStudentIds[i],
+            studentId2: completedStudentIds[j],
+            exp: bondExpPerPair,
+          });
+        }
+      }
     }
 
     dispatch({ type: 'REMOVE_COURSE', courseId: course.id });
@@ -1707,6 +1800,52 @@ export function GameProvider({ children }: { children: ReactNode }) {
     return utilsCanAccessCourse(student, courseDef, state.academyLevel);
   };
 
+  const addBondExp = (studentId1: string, studentId2: string, exp: number) => {
+    dispatch({ type: 'ADD_BOND_EXP', studentId1, studentId2, exp });
+  };
+
+  const createBond = (studentId1: string, studentId2: string) => {
+    dispatch({ type: 'CREATE_BOND', studentId1, studentId2 });
+  };
+
+  const getStudentBonds = (studentId: string): BondRelation[] => {
+    return utilsGetStudentBonds(studentId, state.bonds);
+  };
+
+  const getBondRelation = (studentId1: string, studentId2: string): BondRelation | null => {
+    return utilsGetBondRelation(state.bonds, studentId1, studentId2);
+  };
+
+  const calculateBondBonuses = (studentId: string): BondBonus => {
+    const student = state.students.find(s => s.id === studentId);
+    if (!student) {
+      return {
+        statBonuses: {},
+        expBonus: 0,
+        goldBonus: 0,
+        dropRateBonus: 0,
+        moraleBonus: 0,
+        fatigueRecoveryBonus: 0,
+      };
+    }
+    return utilsCalculateBondBonuses(student, state.bonds, state.students);
+  };
+
+  const calculateTeamBondBonus = (teamStudentIds: string[]) => {
+    return utilsCalculateTeamBondBonus(teamStudentIds, state.bonds, state.students);
+  };
+
+  const findMatchingBondPairs = (studentId1: string, studentId2: string) => {
+    const student1 = state.students.find(s => s.id === studentId1);
+    const student2 = state.students.find(s => s.id === studentId2);
+    if (!student1 || !student2) return [];
+    return utilsFindMatchingBondPairs(student1, student2);
+  };
+
+  const getStudentBondCount = (studentId: string): number => {
+    return utilsGetStudentBondCount(studentId, state.bonds);
+  };
+
   const canPromoteToClass = (studentId: string, targetClass: StudentClass) => {
     const student = state.students.find(s => s.id === studentId);
     if (!student) return { canPromote: false, reasons: ['学员不存在'] };
@@ -1773,6 +1912,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
     calculateMasterySettlementBonus,
     calculateClassSettlementBonus,
     canAccessCourse,
+    addBondExp,
+    createBond,
+    getStudentBonds,
+    getBondRelation,
+    calculateBondBonuses,
+    calculateTeamBondBonus,
+    findMatchingBondPairs,
+    getStudentBondCount,
   };
 
   return <GameContext.Provider value={contextValue}>{children}</GameContext.Provider>;

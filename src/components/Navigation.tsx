@@ -18,6 +18,7 @@ const NAV_ITEMS: Array<{
   { module: 'alchemy', icon: '⚗️', label: '炼金', color: 'from-green-500 to-teal-500' },
   { module: 'equipment', icon: '⚔️', label: '装备', color: 'from-orange-500 to-red-500' },
   { module: 'dungeon', icon: '🗺️', label: '试炼', color: 'from-red-500 to-pink-500' },
+  { module: 'bonds', icon: '💞', label: '羁绊', color: 'from-pink-500 to-rose-500' },
   { module: 'schedule', icon: '📅', label: '排班', color: 'from-cyan-500 to-teal-500' },
   { module: 'settlement', icon: '💹', label: '结算', color: 'from-green-500 to-emerald-500' },
   { module: 'settings', icon: '⚙️', label: '设置', color: 'from-slate-500 to-gray-500' },

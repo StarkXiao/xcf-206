@@ -1,13 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useGame } from '../context/GameContext';
-import { DUNGEON_DEFS, DIFFICULTY_NAMES, DIFFICULTY_COLORS, RARITY_COLORS, RARITY_NAMES, ELEMENT_ICONS, ELEMENT_NAMES, ELEMENT_COLORS, EQUIPMENT_DEFS, POTION_DEFS, MATERIAL_DEFS } from '../data/gameData';
+import { DUNGEON_DEFS, DIFFICULTY_NAMES, DIFFICULTY_COLORS, RARITY_COLORS, RARITY_NAMES, ELEMENT_ICONS, ELEMENT_NAMES, ELEMENT_COLORS, EQUIPMENT_DEFS, POTION_DEFS, MATERIAL_DEFS, BOND_CONFIG } from '../data/gameData';
 import { Student, DungeonDef, BattleUnit, BattleLogEntry, Enemy, Equipment, Potion } from '../types/game';
-import { simulateBattle, formatNumber, levelUpStudent, getFatigueLevel, getFatigueLevelColor, calculateDungeonFatigueCost, generateDungeonDrops, calculateStudentStats } from '../utils/gameUtils';
+import { simulateBattle, formatNumber, levelUpStudent, getFatigueLevel, getFatigueLevelColor, calculateDungeonFatigueCost, generateDungeonDrops, calculateStudentStats, calculateTeamBondBonus } from '../utils/gameUtils';
 
 interface Props {}
 
 export function DungeonModule({}: Props) {
-  const { state, dispatch, canAfford } = useGame();
+  const { state, dispatch, canAfford, calculateTeamBondBonus: ctxCalculateTeamBondBonus, addBondExp } = useGame();
   const [selectedDungeon, setSelectedDungeon] = useState<DungeonDef | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<string[]>([]);
   const [battleState, setBattleState] = useState<{
@@ -30,6 +30,10 @@ export function DungeonModule({}: Props) {
 
   const MAX_TEAM_SIZE = 4;
   const idleStudents = state.students.filter((s) => s.status === 'idle' && s.stats.hp > 0);
+
+  const teamBondBonus = useMemo(() => {
+    return ctxCalculateTeamBondBonus(selectedTeam);
+  }, [selectedTeam, ctxCalculateTeamBondBonus, state.bonds]);
 
   const showNotification = (msg: string) => {
     setNotification(msg);
@@ -91,18 +95,20 @@ export function DungeonModule({}: Props) {
     const players: Student[] = selectedTeam
       .map((id) => state.students.find((s) => s.id === id)!)
       .filter(Boolean);
+    const teamBonus = ctxCalculateTeamBondBonus(selectedTeam);
     const playerUnits: BattleUnit[] = players.map((s) => {
       const calculatedStats = calculateStudentStats(s, state.equipment, state.potions);
+      const statBonus = teamBonus.totalStatBonus as Partial<typeof calculatedStats>;
       return {
         id: s.id,
         name: s.name,
         isPlayer: true,
-        hp: calculatedStats.hp,
-        maxHp: calculatedStats.maxHp,
-        attack: calculatedStats.attack,
-        defense: calculatedStats.defense,
-        magic: calculatedStats.magic,
-        speed: calculatedStats.speed,
+        hp: calculatedStats.hp + (statBonus.maxHp || 0),
+        maxHp: calculatedStats.maxHp + (statBonus.maxHp || 0),
+        attack: calculatedStats.attack + (statBonus.attack || 0),
+        defense: calculatedStats.defense + (statBonus.defense || 0),
+        magic: calculatedStats.magic + (statBonus.magic || 0),
+        speed: calculatedStats.speed + (statBonus.speed || 0),
         element: s.element,
         icon: s.avatar,
         alive: true,
@@ -179,17 +185,21 @@ export function DungeonModule({}: Props) {
     rewardBonus: number,
     players: Student[]
   ) => {
+    const teamBonus = ctxCalculateTeamBondBonus(selectedTeam);
+    const expBonusMultiplier = 1 + teamBonus.expBonus / 100;
+    const dropRateBonusMultiplier = 1 + teamBonus.dropRateBonus / 100;
+
     let equipmentDrops: Equipment[] = [];
     let potionDrops: Potion[] = [];
     let materialDrops: { type: string; quantity: number }[] = [];
 
     if (result.victory && selectedDungeon) {
-      const drops = generateDungeonDrops(selectedDungeon.difficulty, result.victory);
+      const drops = generateDungeonDrops(selectedDungeon.difficulty, result.victory, dropRateBonusMultiplier);
       equipmentDrops = drops.equipment;
       potionDrops = drops.potions;
       materialDrops = Object.entries(drops.materials).map(([type, quantity]) => ({
         type,
-        quantity: quantity || 0,
+        quantity: Math.floor((quantity || 0) * dropRateBonusMultiplier),
       }));
     }
 
@@ -231,13 +241,24 @@ export function DungeonModule({}: Props) {
         dispatch({ type: 'ADD_MATERIALS', materials: { [mat.type]: mat.quantity } });
       }
 
-      const expPerSurvivor = Math.floor(result.expGained / Math.max(1, result.survivors.length));
+      const expPerSurvivor = Math.floor((result.expGained * expBonusMultiplier) / Math.max(1, result.survivors.length));
       for (const survivorId of result.survivors) {
         const student = state.students.find((s) => s.id === survivorId);
         if (student) {
           let updated = { ...student, exp: student.exp + expPerSurvivor };
           updated = levelUpStudent(updated, state.equipment, state.potions);
           dispatch({ type: 'UPDATE_STUDENT', student: updated });
+        }
+      }
+    }
+
+    if (selectedTeam.length >= 2) {
+      const bondExp = result.victory 
+        ? BOND_CONFIG.EXP_PER_DUNGEON_VICTORY 
+        : Math.floor(BOND_CONFIG.EXP_PER_DUNGEON_VICTORY * 0.3);
+      for (let i = 0; i < selectedTeam.length; i++) {
+        for (let j = i + 1; j < selectedTeam.length; j++) {
+          addBondExp(selectedTeam[i], selectedTeam[j], bondExp);
         }
       }
     }
@@ -427,6 +448,51 @@ export function DungeonModule({}: Props) {
               </button>
             )}
           </div>
+
+          {selectedTeam.length >= 2 && teamBondBonus.activeBonds > 0 && (
+            <div className="mb-4 p-3 bg-gradient-to-r from-pink-900/30 to-rose-900/30 rounded-lg border border-pink-500/30">
+              <div className="text-sm font-bold text-pink-300 mb-2 flex items-center gap-2">
+                <span>💞</span> 队伍羁绊加成 ({teamBondBonus.activeBonds} 条羁绊)
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                {teamBondBonus.expBonus > 0 && (
+                  <div className="text-green-400">
+                    经验 +{teamBondBonus.expBonus}%
+                  </div>
+                )}
+                {teamBondBonus.dropRateBonus > 0 && (
+                  <div className="text-yellow-400">
+                    掉落率 +{teamBondBonus.dropRateBonus}%
+                  </div>
+                )}
+                {(teamBondBonus.totalStatBonus.attack || 0) > 0 && (
+                  <div className="text-orange-400">
+                    攻击 +{teamBondBonus.totalStatBonus.attack}
+                  </div>
+                )}
+                {(teamBondBonus.totalStatBonus.defense || 0) > 0 && (
+                  <div className="text-blue-400">
+                    防御 +{teamBondBonus.totalStatBonus.defense}
+                  </div>
+                )}
+                {(teamBondBonus.totalStatBonus.magic || 0) > 0 && (
+                  <div className="text-purple-400">
+                    魔法 +{teamBondBonus.totalStatBonus.magic}
+                  </div>
+                )}
+                {(teamBondBonus.totalStatBonus.maxHp || 0) > 0 && (
+                  <div className="text-red-400">
+                    生命 +{teamBondBonus.totalStatBonus.maxHp}
+                  </div>
+                )}
+                {(teamBondBonus.totalStatBonus.speed || 0) > 0 && (
+                  <div className="text-cyan-400">
+                    速度 +{teamBondBonus.totalStatBonus.speed}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {idleStudents.length === 0 ? (
             <div className="text-center py-6 bg-slate-800/30 rounded-lg border border-dashed border-slate-600">
