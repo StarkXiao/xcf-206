@@ -48,6 +48,7 @@ type GameAction =
   | { type: 'COMPLETE_CRAFTING'; jobId: string }
   | { type: 'CLAIM_CRAFTING'; jobId: string }
   | { type: 'UPDATE_CRAFTING_JOBS' }
+  | { type: 'EXPIRE_POTIONS' }
   | { type: 'ADD_MULTIPLE_EQUIPMENT'; equipment: Equipment[] }
   | { type: 'ADD_MULTIPLE_POTIONS'; potions: Potion[] };
 
@@ -613,6 +614,9 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       let updatedStudent = { ...student };
       const newQuantity = potion.quantity - action.quantity;
 
+      const isBuffType = !['hp', 'fatigue', 'morale'].includes(potionDef.type);
+      const usedPotionIds: string[] = [];
+
       if (potionDef.type === 'hp') {
         const healAmount = (potionDef.effect.value || 0) * action.quantity;
         const newHp = Math.min(updatedStudent.stats.maxHp, updatedStudent.stats.hp + healAmount);
@@ -623,20 +627,27 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       } else if (potionDef.type === 'morale') {
         const boostAmount = (potionDef.effect.value || 0) * action.quantity;
         updatedStudent.morale = Math.min(100, updatedStudent.morale + boostAmount);
-      } else {
-        for (let i = 0; i < action.quantity; i++) {
-          updatedStudent.activePotions = [...updatedStudent.activePotions, potion.id];
-        }
       }
 
-      const usedPotion: Potion = {
-        ...potion,
-        isUsed: true,
-        usedBy: action.studentId,
-        usedAt: Date.now(),
-        endTime: Date.now() + (potionDef.duration || 0),
-        quantity: 1,
-      };
+      const usedPotions: Potion[] = [];
+      const now = Date.now();
+      for (let i = 0; i < action.quantity; i++) {
+        const usedPotionId = `${potion.id}_used_${now}_${i}`;
+        usedPotionIds.push(usedPotionId);
+        usedPotions.push({
+          id: usedPotionId,
+          defId: potion.defId,
+          isUsed: true,
+          usedBy: action.studentId,
+          usedAt: now,
+          endTime: isBuffType ? now + (potionDef.duration || 0) : now,
+          quantity: 1,
+        });
+      }
+
+      if (isBuffType) {
+        updatedStudent.activePotions = [...updatedStudent.activePotions, ...usedPotionIds];
+      }
 
       const updatedPotions = state.potions.flatMap((p) => {
         if (p.id !== action.potionId) return [p];
@@ -644,12 +655,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         if (newQuantity > 0) {
           result.push({ ...p, quantity: newQuantity });
         }
-        for (let i = 0; i < action.quantity; i++) {
-          result.push({
-            ...usedPotion,
-            id: `${p.id}_used_${Date.now()}_${i}`,
-          });
-        }
+        result.push(...usedPotions);
         return result;
       });
 
@@ -731,6 +737,52 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       return {
         ...state,
         craftingJobs: updatedJobs,
+      };
+    }
+
+    case 'EXPIRE_POTIONS': {
+      const now = Date.now();
+      const expiredPotionIds = new Set<string>();
+
+      const remainingPotions = state.potions.filter((p) => {
+        if (p.isUsed && p.endTime && now >= p.endTime) {
+          expiredPotionIds.add(p.id);
+          return false;
+        }
+        return true;
+      });
+
+      if (expiredPotionIds.size === 0) {
+        return state;
+      }
+
+      let hasExpiredForStudent = false;
+      const updatedStudents = state.students.map((s) => {
+        const hasExpired = s.activePotions.some((id) => expiredPotionIds.has(id));
+        if (!hasExpired) return s;
+        hasExpiredForStudent = true;
+        return {
+          ...s,
+          activePotions: s.activePotions.filter((id) => !expiredPotionIds.has(id)),
+        };
+      });
+
+      if (!hasExpiredForStudent) {
+        return {
+          ...state,
+          potions: remainingPotions,
+        };
+      }
+
+      const recalculatedStudents = updatedStudents.map((s) => ({
+        ...s,
+        stats: calculateStudentStats(s, state.equipment, remainingPotions),
+      }));
+
+      return {
+        ...state,
+        potions: remainingPotions,
+        students: recalculatedStudents,
       };
     }
 
@@ -1376,6 +1428,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const interval = setInterval(() => {
       dispatch({ type: 'UPDATE_CRAFTING_JOBS' });
+      dispatch({ type: 'EXPIRE_POTIONS' });
     }, 1000);
     return () => clearInterval(interval);
   }, []);

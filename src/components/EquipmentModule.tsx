@@ -67,7 +67,7 @@ export function EquipmentModule() {
       showNotification('⚠️ 请先选择学员');
       return;
     }
-    if (potion.usedBy) {
+    if (potion.isUsed) {
       showNotification('⚠️ 该药剂已被使用');
       return;
     }
@@ -313,7 +313,7 @@ export function EquipmentModule() {
   const renderPotionCard = (item: Potion) => {
     const def = POTION_DEFS[item.defId];
     if (!def) return null;
-    const isUsed = !!item.usedBy;
+    const isUsed = item.isUsed;
     const user = isUsed ? state.students.find((s) => s.id === item.usedBy) : null;
 
     const remaining = item.endTime ? Math.max(0, item.endTime - Date.now()) : 0;
@@ -513,17 +513,17 @@ export function EquipmentModule() {
                 <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-3">
                   <span>🧪</span> 药剂库存
                   <span className="text-sm text-gray-400 font-normal">
-                    ({state.potions.filter((p) => !p.usedBy).length})
+                    ({state.potions.filter((p) => !p.isUsed).length})
                   </span>
                 </h3>
-                {state.potions.filter((p) => !p.usedBy).length === 0 ? (
+                {state.potions.filter((p) => !p.isUsed).length === 0 ? (
                   <div className="text-center py-8 bg-slate-800/30 rounded-xl border border-dashed border-slate-600">
                     <div className="text-4xl mb-2">🧪</div>
                     <p className="text-gray-400">暂用药剂</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {state.potions.filter((p) => !p.usedBy).map((item) => renderPotionCard(item))}
+                    {state.potions.filter((p) => !p.isUsed).map((item) => renderPotionCard(item))}
                   </div>
                 )}
               </div>

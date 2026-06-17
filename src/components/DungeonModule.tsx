@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useGame } from '../context/GameContext';
 import { DUNGEON_DEFS, DIFFICULTY_NAMES, DIFFICULTY_COLORS, RARITY_COLORS, RARITY_NAMES, ELEMENT_ICONS, ELEMENT_NAMES, ELEMENT_COLORS, EQUIPMENT_DEFS, POTION_DEFS, MATERIAL_DEFS } from '../data/gameData';
 import { Student, DungeonDef, BattleUnit, BattleLogEntry, Enemy, Equipment, Potion } from '../types/game';
-import { simulateBattle, formatNumber, levelUpStudent, getFatigueLevel, getFatigueLevelColor, calculateDungeonFatigueCost, generateDungeonDrops } from '../utils/gameUtils';
+import { simulateBattle, formatNumber, levelUpStudent, getFatigueLevel, getFatigueLevelColor, calculateDungeonFatigueCost, generateDungeonDrops, calculateStudentStats } from '../utils/gameUtils';
 
 interface Props {}
 
@@ -91,20 +91,23 @@ export function DungeonModule({}: Props) {
     const players: Student[] = selectedTeam
       .map((id) => state.students.find((s) => s.id === id)!)
       .filter(Boolean);
-    const playerUnits: BattleUnit[] = players.map((s) => ({
-      id: s.id,
-      name: s.name,
-      isPlayer: true,
-      hp: s.stats.hp,
-      maxHp: s.stats.maxHp,
-      attack: s.stats.attack,
-      defense: s.stats.defense,
-      magic: s.stats.magic,
-      speed: s.stats.speed,
-      element: s.element,
-      icon: s.avatar,
-      alive: true,
-    }));
+    const playerUnits: BattleUnit[] = players.map((s) => {
+      const calculatedStats = calculateStudentStats(s, state.equipment, state.potions);
+      return {
+        id: s.id,
+        name: s.name,
+        isPlayer: true,
+        hp: calculatedStats.hp,
+        maxHp: calculatedStats.maxHp,
+        attack: calculatedStats.attack,
+        defense: calculatedStats.defense,
+        magic: calculatedStats.magic,
+        speed: calculatedStats.speed,
+        element: s.element,
+        icon: s.avatar,
+        alive: true,
+      };
+    });
     const enemyUnits: BattleUnit[] = selectedDungeon.enemies.map((e: Enemy) => ({
       id: e.id,
       name: e.name,
