@@ -1,0 +1,285 @@
+import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy } from '../types/game';
+import {
+  RARITY_WEIGHTS,
+  RARITY_MULTIPLIERS,
+  BASE_STUDENT_STATS,
+  STUDENT_FIRST_NAMES,
+  STUDENT_LAST_NAMES,
+  AVATARS,
+  BUILDING_DEFS,
+  ELEMENT_NAMES,
+  SKILLS,
+} from '../data/gameData';
+
+export function pickRandom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+export function randomInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+export function weightedRandomRarity(): Rarity {
+  const total = Object.values(RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
+  let rand = Math.random() * total;
+  for (const [rarity, weight] of Object.entries(RARITY_WEIGHTS) as [Rarity, number][]) {
+    rand -= weight;
+    if (rand <= 0) return rarity;
+  }
+  return 'common';
+}
+
+export function randomElement(): ElementType {
+  const elements: ElementType[] = ['fire', 'water', 'earth', 'wind', 'light', 'dark'];
+  return pickRandom(elements);
+}
+
+export function generateId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+export function generateStudentName(): string {
+  return `${pickRandom(STUDENT_FIRST_NAMES)}·${pickRandom(STUDENT_LAST_NAMES)}`;
+}
+
+export function generateStudentStats(rarity: Rarity, element: ElementType): StudentStats {
+  const multiplier = RARITY_MULTIPLIERS[rarity];
+  const elementBonus: Record<ElementType, Partial<StudentStats>> = {
+    fire: { attack: 5, magic: 3 },
+    water: { maxHp: 15, defense: 3 },
+    earth: { defense: 5, maxHp: 10 },
+    wind: { speed: 5, critRate: 2 },
+    light: { magic: 5, critDamage: 10 },
+    dark: { attack: 3, magic: 4, critRate: 3 },
+  };
+  const bonus = elementBonus[element];
+  const variance = () => randomInt(-2, 2);
+  return {
+    hp: Math.floor((BASE_STUDENT_STATS.hp + (bonus.maxHp || 0) + variance() * 2) * multiplier),
+    maxHp: Math.floor((BASE_STUDENT_STATS.maxHp + (bonus.maxHp || 0) + variance() * 2) * multiplier),
+    attack: Math.floor((BASE_STUDENT_STATS.attack + (bonus.attack || 0) + variance()) * multiplier),
+    defense: Math.floor((BASE_STUDENT_STATS.defense + (bonus.defense || 0) + variance()) * multiplier),
+    magic: Math.floor((BASE_STUDENT_STATS.magic + (bonus.magic || 0) + variance()) * multiplier),
+    speed: Math.floor((BASE_STUDENT_STATS.speed + (bonus.speed || 0) + variance()) * multiplier),
+    critRate: Math.floor((BASE_STUDENT_STATS.critRate + (bonus.critRate || 0)) * multiplier),
+    critDamage: Math.floor((BASE_STUDENT_STATS.critDamage + (bonus.critDamage || 0)) * multiplier),
+  };
+}
+
+export function generateStudent(): Student {
+  const rarity = weightedRandomRarity();
+  const element = randomElement();
+  const stats = generateStudentStats(rarity, element);
+  const skills: string[] = [];
+  const elementSkills = SKILLS.filter((s) => s.element === element);
+  if (elementSkills.length > 0) {
+    skills.push(pickRandom(elementSkills).name);
+  }
+  if (rarity === 'rare' || rarity === 'epic' || rarity === 'legendary') {
+    const otherSkills = SKILLS.filter((s) => !skills.includes(s.name));
+    if (otherSkills.length > 0) skills.push(pickRandom(otherSkills).name);
+  }
+  if (rarity === 'epic' || rarity === 'legendary') {
+    const moreSkills = SKILLS.filter((s) => !skills.includes(s.name));
+    if (moreSkills.length > 0) skills.push(pickRandom(moreSkills).name);
+  }
+  return {
+    id: generateId(),
+    name: generateStudentName(),
+    rarity,
+    level: 1,
+    exp: 0,
+    element,
+    stats,
+    skills,
+    avatar: pickRandom(AVATARS),
+    status: 'idle',
+    studyProgress: 0,
+    morale: 100,
+  };
+}
+
+export function calculateBuildingDailyOutput(building: Building): Resources {
+  const def = BUILDING_DEFS[building.type];
+  if (!building.constructed || building.level === 0) {
+    return { gold: 0, mana: 0, exp: 0, crystals: 0, materials: 0 };
+  }
+  const mult = Math.pow(def.effectMultiplier, building.level - 1);
+  return {
+    gold: Math.floor(def.baseEffect.gold * mult * building.level),
+    mana: Math.floor(def.baseEffect.mana * mult * building.level),
+    exp: Math.floor(def.baseEffect.exp * mult * building.level),
+    crystals: Math.floor(def.baseEffect.crystals * mult),
+    materials: Math.floor(def.baseEffect.materials * mult * building.level),
+  };
+}
+
+export function calculateTotalDailyOutput(buildings: Building[]): Resources {
+  const total: Resources = { gold: 0, mana: 0, exp: 0, crystals: 0, materials: 0 };
+  for (const building of buildings) {
+    const output = calculateBuildingDailyOutput(building);
+    total.gold += output.gold;
+    total.mana += output.mana;
+    total.exp += output.exp;
+    total.crystals += output.crystals;
+    total.materials += output.materials;
+  }
+  return total;
+}
+
+function getElementMultiplier(attacker: ElementType, defender: ElementType): number {
+  const advantages: Record<ElementType, ElementType> = {
+    fire: 'wind',
+    water: 'fire',
+    earth: 'water',
+    wind: 'earth',
+    light: 'dark',
+    dark: 'light',
+  };
+  if (advantages[attacker] === defender) return 1.5;
+  if (advantages[defender] === attacker) return 0.7;
+  return 1.0;
+}
+
+function calculateDamage(
+  attacker: BattleUnit,
+  defender: BattleUnit,
+  useMagic: boolean = false
+): { damage: number; isCrit: boolean } {
+  const atk = useMagic ? attacker.magic : attacker.attack;
+  const def = defender.defense;
+  const elementMult = getElementMultiplier(attacker.element, defender.element);
+  const isCrit = Math.random() * 100 < 5;
+  const critMult = isCrit ? 1.5 : 1;
+  const baseDamage = Math.max(1, atk - def * 0.5);
+  const variance = 0.9 + Math.random() * 0.2;
+  const damage = Math.floor(baseDamage * elementMult * critMult * variance);
+  return { damage, isCrit };
+}
+
+export function simulateBattle(
+  playerUnits: Student[],
+  enemies: Enemy[]
+): { victory: boolean; battleLog: BattleLogEntry[]; survivors: string[]; expGained: number } {
+  const battleLog: BattleLogEntry[] = [];
+  let turn = 1;
+  const playerBattleUnits: BattleUnit[] = playerUnits.map((s) => ({
+    id: s.id,
+    name: s.name,
+    isPlayer: true,
+    hp: s.stats.hp,
+    maxHp: s.stats.maxHp,
+    attack: s.stats.attack,
+    defense: s.stats.defense,
+    magic: s.stats.magic,
+    speed: s.stats.speed,
+    element: s.element,
+    icon: s.avatar,
+    alive: true,
+  }));
+  const enemyBattleUnits: BattleUnit[] = enemies.map((e) => ({ ...e, isPlayer: false, alive: true }));
+  const maxTurns = 50;
+  while (turn <= maxTurns) {
+    const allUnits = [...playerBattleUnits, ...enemyBattleUnits]
+      .filter((u) => u.alive)
+      .sort((a, b) => b.speed - a.speed);
+    for (const unit of allUnits) {
+      if (!unit.alive) continue;
+      const enemiesArr = unit.isPlayer ? enemyBattleUnits : playerBattleUnits;
+      const aliveEnemies = enemiesArr.filter((e) => e.alive);
+      if (aliveEnemies.length === 0) break;
+      const target = aliveEnemies.reduce((lowest, e) => (e.hp < lowest.hp ? e : lowest), aliveEnemies[0]);
+      const useMagic = unit.magic > unit.attack * 1.2;
+      const { damage, isCrit } = calculateDamage(unit, target, useMagic);
+      target.hp = Math.max(0, target.hp - damage);
+      if (target.hp === 0) target.alive = false;
+      const attackType = useMagic ? '魔法攻击' : '物理攻击';
+      const critText = isCrit ? '【暴击】' : '';
+      battleLog.push({
+        turn,
+        attacker: unit.name,
+        target: target.name,
+        damage,
+        isCrit,
+        isHeal: false,
+        message: `${turn}回合: ${unit.name} 使用${attackType}${critText} 对 ${target.name} 造成 ${damage} 点伤害${target.alive ? '' : '，目标被击败！'}`,
+      });
+      const allPlayersDead = playerBattleUnits.every((u) => !u.alive);
+      const allEnemiesDead = enemyBattleUnits.every((u) => !u.alive);
+      if (allPlayersDead || allEnemiesDead) break;
+    }
+    const allPlayersDead = playerBattleUnits.every((u) => !u.alive);
+    const allEnemiesDead = enemyBattleUnits.every((u) => !u.alive);
+    if (allPlayersDead || allEnemiesDead) break;
+    turn++;
+  }
+  const victory = enemyBattleUnits.every((u) => !u.alive);
+  const survivors = playerBattleUnits.filter((u) => u.alive).map((u) => u.id);
+  const totalEnemyStrength = enemies.reduce((sum, e) => sum + e.maxHp + e.attack * 5, 0);
+  const survivalBonus = survivors.length / playerBattleUnits.length;
+  const expGained = Math.floor(totalEnemyStrength * survivalBonus * 0.5);
+  return { victory, battleLog, survivors, expGained };
+}
+
+export function calculateUpgradeCost(baseCost: number, level: number, multiplier: number): number {
+  return Math.floor(baseCost * Math.pow(multiplier, level));
+}
+
+export function getExpToNextLevel(level: number): number {
+  return level * 100 + Math.pow(level, 2) * 20;
+}
+
+export function levelUpStudent(student: Student): Student {
+  let exp = student.exp;
+  let level = student.level;
+  let expNeeded = getExpToNextLevel(level);
+  while (exp >= expNeeded) {
+    exp -= expNeeded;
+    level++;
+    expNeeded = getExpToNextLevel(level);
+  }
+  const levelDiff = level - student.level;
+  if (levelDiff > 0) {
+    const statGain: StudentStats = {
+      hp: Math.floor(student.stats.maxHp * 0.1 * levelDiff),
+      maxHp: Math.floor(student.stats.maxHp * 0.1 * levelDiff),
+      attack: Math.floor(student.stats.attack * 0.08 * levelDiff),
+      defense: Math.floor(student.stats.defense * 0.08 * levelDiff),
+      magic: Math.floor(student.stats.magic * 0.08 * levelDiff),
+      speed: Math.floor(student.stats.speed * 0.05 * levelDiff),
+      critRate: Math.floor(student.stats.critRate * 0.05 * levelDiff),
+      critDamage: Math.floor(student.stats.critDamage * 0.05 * levelDiff),
+    };
+    return {
+      ...student,
+      level,
+      exp,
+      stats: {
+        hp: student.stats.hp + statGain.hp,
+        maxHp: student.stats.maxHp + statGain.maxHp,
+        attack: student.stats.attack + statGain.attack,
+        defense: student.stats.defense + statGain.defense,
+        magic: student.stats.magic + statGain.magic,
+        speed: student.stats.speed + statGain.speed,
+        critRate: student.stats.critRate + statGain.critRate,
+        critDamage: student.stats.critDamage + statGain.critDamage,
+      },
+    };
+  }
+  return { ...student, exp };
+}
+
+export function formatNumber(num: number): string {
+  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+  if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+  return Math.floor(num).toString();
+}
+
+export function formatTime(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
