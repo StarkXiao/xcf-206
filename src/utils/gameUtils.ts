@@ -1,4 +1,4 @@
-import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType, TimeOfDay, PoolType, PityCounter, RecruitHistoryEntry, RecruitStats, Equipment, Potion, EquipmentSlot, MaterialType, DungeonDifficulty } from '../types/game';
+import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType, TimeOfDay, PoolType, PityCounter, RecruitHistoryEntry, RecruitStats, Equipment, Potion, EquipmentSlot, MaterialType, DungeonDifficulty, CourseMastery, MasteryLevel, StudentClass, ClassDef, CourseType, CourseDef, ClassPromotion } from '../types/game';
 import {
   RARITY_WEIGHTS,
   RARITY_MULTIPLIERS,
@@ -16,6 +16,9 @@ import {
   EQUIPMENT_DEFS,
   POTION_DEFS,
   DUNGEON_DROP_RATES,
+  MASTERY_CONFIG,
+  CLASS_DEFS,
+  COURSE_DEFS,
 } from '../data/gameData';
 
 export function pickRandom<T>(arr: T[]): T {
@@ -110,6 +113,14 @@ export function generateStudent(): Student {
     maxFatigue,
     equipment: { weapon: null, armor: null, accessory: null, relic: null },
     activePotions: [],
+    class: 'novice',
+    classTier: 'basic',
+    masteries: [],
+    promotionHistory: [],
+    classExp: 0,
+    classLevel: 1,
+    availableForPromotion: false,
+    currentPromotionTarget: undefined,
   };
 }
 
@@ -592,6 +603,14 @@ export function generateStudentForPool(poolId: PoolType, pityCounter: PityCounte
     maxFatigue,
     equipment: { weapon: null, armor: null, accessory: null, relic: null },
     activePotions: [],
+    class: 'novice',
+    classTier: 'basic',
+    masteries: [],
+    promotionHistory: [],
+    classExp: 0,
+    classLevel: 1,
+    availableForPromotion: false,
+    currentPromotionTarget: undefined,
   };
 
   return { student, isPity, isRateUp };
@@ -851,4 +870,332 @@ export function getSetBonusPieces(equipment: Equipment[], setName: string): numb
     const def = EQUIPMENT_DEFS[e.defId];
     return def && def.setBonus === setName && e.isEquipped;
   }).length;
+}
+
+const MASTERY_LEVELS: MasteryLevel[] = ['novice', 'apprentice', 'adept', 'expert', 'master', 'grandmaster'];
+
+export function getMasteryLevelIndex(level: MasteryLevel): number {
+  return MASTERY_LEVELS.indexOf(level);
+}
+
+export function getMasteryLevelFromIndex(index: number): MasteryLevel {
+  return MASTERY_LEVELS[Math.max(0, Math.min(MASTERY_LEVELS.length - 1, index))];
+}
+
+export function masteryLevelMeetsRequirement(current: MasteryLevel, required: MasteryLevel): boolean {
+  return getMasteryLevelIndex(current) >= getMasteryLevelIndex(required);
+}
+
+export function createInitialMastery(courseType: CourseType): CourseMastery {
+  return {
+    courseType,
+    level: 'novice',
+    exp: 0,
+    expToNext: MASTERY_CONFIG.expPerLevel[1],
+    totalCompleted: 0,
+    bonuses: {},
+  };
+}
+
+export function getStudentMastery(student: Student, courseType: CourseType): CourseMastery {
+  const existing = student.masteries.find(m => m.courseType === courseType);
+  return existing || createInitialMastery(courseType);
+}
+
+export function addMasteryExp(student: Student, courseType: CourseType, exp: number): { student: Student; leveledUp: boolean; newLevel: MasteryLevel } {
+  const mastery = getStudentMastery(student, courseType);
+  let newExp = mastery.exp + exp;
+  let newLevelIndex = getMasteryLevelIndex(mastery.level);
+  let leveledUp = false;
+  let newLevel = mastery.level;
+
+  while (newLevelIndex < MASTERY_LEVELS.length - 1 && newExp >= MASTERY_CONFIG.expPerLevel[newLevelIndex + 1]) {
+    newLevelIndex++;
+    leveledUp = true;
+  }
+
+  if (leveledUp) {
+    newLevel = getMasteryLevelFromIndex(newLevelIndex);
+  }
+
+  const newExpToNext = newLevelIndex < MASTERY_LEVELS.length - 1
+    ? MASTERY_CONFIG.expPerLevel[newLevelIndex + 1]
+    : MASTERY_CONFIG.expPerLevel[MASTERY_LEVELS.length - 1];
+
+  const bonuses = MASTERY_CONFIG.statBonuses[newLevel];
+
+  const updatedMastery: CourseMastery = {
+    ...mastery,
+    exp: newExp,
+    level: newLevel,
+    expToNext: newExpToNext,
+    totalCompleted: mastery.totalCompleted + 1,
+    bonuses,
+  };
+
+  const otherMasteries = student.masteries.filter(m => m.courseType !== courseType);
+  const updatedMasteries = [...otherMasteries, updatedMastery];
+
+  const updatedStudent: Student = {
+    ...student,
+    masteries: updatedMasteries,
+  };
+
+  return { student: updatedStudent, leveledUp, newLevel };
+}
+
+export function calculateTotalMasteryBonuses(student: Student): Partial<StudentStats> {
+  const total: Partial<StudentStats> = {
+    maxHp: 0, attack: 0, defense: 0, magic: 0, speed: 0,
+    critRate: 0, critDamage: 0, hp: 0,
+  };
+
+  for (const mastery of student.masteries) {
+    for (const [stat, value] of Object.entries(mastery.bonuses)) {
+      if (value !== undefined && stat in total) {
+        (total as Record<string, number>)[stat] = (total as Record<string, number>)[stat] + value;
+      }
+    }
+  }
+
+  return total;
+}
+
+export function canAccessCourse(student: Student, courseDef: CourseDef, academyLevel: number): { canAccess: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+
+  if (student.level < courseDef.requiredLevel) {
+    reasons.push(`需要学员等级 Lv.${courseDef.requiredLevel}（当前 Lv.${student.level}）`);
+  }
+
+  if (courseDef.unlockRequirements) {
+    const req = courseDef.unlockRequirements;
+
+    if (req.requiredAcademyLevel && academyLevel < req.requiredAcademyLevel) {
+      reasons.push(`需要学院等级 Lv.${req.requiredAcademyLevel}（当前 Lv.${academyLevel}）`);
+    }
+
+    if (req.requiredClass && student.class !== req.requiredClass) {
+      const className = CLASS_DEFS[req.requiredClass]?.name || req.requiredClass;
+      reasons.push(`需要职业：${className}`);
+    }
+
+    if (req.requiredMasteries) {
+      for (const masteryReq of req.requiredMasteries) {
+        const studentMastery = getStudentMastery(student, masteryReq.courseType);
+        if (!masteryLevelMeetsRequirement(studentMastery.level, masteryReq.level)) {
+          const courseName = COURSE_DEFS[masteryReq.courseType]?.name || masteryReq.courseType;
+          const levelName = MASTERY_CONFIG.names[masteryReq.level];
+          reasons.push(`${courseName} 需要 ${levelName}（当前 ${MASTERY_CONFIG.names[studentMastery.level]}）`);
+        }
+      }
+    }
+  }
+
+  return { canAccess: reasons.length === 0, reasons };
+}
+
+export function getAvailablePromotions(student: Student): ClassDef[] {
+  const currentClass = CLASS_DEFS[student.class];
+  if (currentClass?.unlocksClasses) {
+    return currentClass.unlocksClasses
+      .map(classId => CLASS_DEFS[classId])
+      .filter(Boolean);
+  }
+  return [];
+}
+
+export function canPromoteToClass(student: Student, targetClassId: StudentClass): { canPromote: boolean; reasons: string[] } {
+  const targetClass = CLASS_DEFS[targetClassId];
+  if (!targetClass) {
+    return { canPromote: false, reasons: ['职业不存在'] };
+  }
+
+  const reasons: string[] = [];
+
+  if (student.level < targetClass.requiredLevel) {
+    reasons.push(`需要学员等级 Lv.${targetClass.requiredLevel}（当前 Lv.${student.level}）`);
+  }
+
+  for (const masteryReq of targetClass.requiredMasteries) {
+    const studentMastery = getStudentMastery(student, masteryReq.courseType);
+    if (!masteryLevelMeetsRequirement(studentMastery.level, masteryReq.level)) {
+      const courseName = COURSE_DEFS[masteryReq.courseType]?.name || masteryReq.courseType;
+      const levelName = MASTERY_CONFIG.names[masteryReq.level];
+      reasons.push(`${courseName} ${levelName}（当前 ${MASTERY_CONFIG.names[studentMastery.level]}）`);
+    }
+  }
+
+  for (const [stat, required] of Object.entries(targetClass.requiredStats)) {
+    const current = student.stats[stat as keyof StudentStats];
+    if (required !== undefined && current < required) {
+      const statName = stat === 'maxHp' ? '生命值' : stat === 'attack' ? '攻击' : stat === 'defense' ? '防御' : stat === 'magic' ? '魔法' : stat === 'speed' ? '速度' : stat === 'critRate' ? '暴击率' : '暴击伤害';
+      reasons.push(`${statName} ${required}（当前 ${current}）`);
+    }
+  }
+
+  const currentClass = CLASS_DEFS[student.class];
+  if (currentClass?.unlocksClasses && !currentClass.unlocksClasses.includes(targetClassId)) {
+    reasons.push(`当前职业 ${currentClass?.name} 无法转职到 ${targetClass.name}`);
+  }
+
+  return { canPromote: reasons.length === 0, reasons };
+}
+
+export function promoteStudent(student: Student, targetClassId: StudentClass): Student {
+  const targetClass = CLASS_DEFS[targetClassId];
+  if (!targetClass) return student;
+
+  const newSkills = [...student.skills];
+  for (const skill of targetClass.skills) {
+    if (!newSkills.includes(skill)) {
+      newSkills.push(skill);
+    }
+  }
+
+  const promotionEntry: ClassPromotion = {
+    fromClass: student.class,
+    toClass: targetClassId,
+    completedAt: Date.now(),
+  };
+
+  const newBaseStats = { ...student.baseStats };
+  for (const [stat, value] of Object.entries(targetClass.statGrowth)) {
+    if (stat in newBaseStats && value !== undefined) {
+      (newBaseStats as Record<string, number>)[stat] = (newBaseStats as Record<string, number>)[stat] + value * 5;
+    }
+  }
+
+  const updatedStudent: Student = {
+    ...student,
+    class: targetClassId,
+    classTier: targetClass.tier,
+    skills: newSkills,
+    baseStats: newBaseStats,
+    promotionHistory: [...student.promotionHistory, promotionEntry],
+    availableForPromotion: false,
+    currentPromotionTarget: undefined,
+    classExp: 0,
+    classLevel: 1,
+  };
+
+  return updatedStudent;
+}
+
+export function getClassExpToNextLevel(classLevel: number): number {
+  return classLevel * 200 + Math.pow(classLevel, 2) * 50;
+}
+
+export function addClassExp(student: Student, exp: number): Student {
+  let newExp = student.classExp + exp;
+  let newLevel = student.classLevel;
+  let expNeeded = getClassExpToNextLevel(newLevel);
+
+  while (newExp >= expNeeded) {
+    newExp -= expNeeded;
+    newLevel++;
+    expNeeded = getClassExpToNextLevel(newLevel);
+  }
+
+  const classDef = CLASS_DEFS[student.class];
+  const newBaseStats = { ...student.baseStats };
+
+  if (newLevel > student.classLevel && classDef) {
+    const levelsGained = newLevel - student.classLevel;
+    for (const [stat, value] of Object.entries(classDef.statGrowth)) {
+      if (stat in newBaseStats && value !== undefined) {
+        (newBaseStats as Record<string, number>)[stat] = (newBaseStats as Record<string, number>)[stat] + value * levelsGained;
+      }
+    }
+  }
+
+  return {
+    ...student,
+    classExp: newExp,
+    classLevel: newLevel,
+    baseStats: newBaseStats,
+  };
+}
+
+export function calculateClassBonuses(student: Student): Partial<StudentStats> {
+  const classDef = CLASS_DEFS[student.class];
+  if (!classDef) return {};
+
+  const bonuses: Partial<StudentStats> = { ...classDef.statGrowth };
+  const classLevelBonus = student.classLevel - 1;
+
+  if (classLevelBonus > 0) {
+    for (const [stat, value] of Object.entries(bonuses)) {
+      if (value !== undefined && typeof value === 'number') {
+        (bonuses as Record<string, number>)[stat] = value * classLevelBonus;
+      }
+    }
+  }
+
+  return bonuses;
+}
+
+export function calculateMasterySettlementBonus(student: Student): { gold: number; exp: number; mana: number } {
+  let goldBonus = 0;
+  let expBonus = 0;
+  let manaBonus = 0;
+
+  for (const mastery of student.masteries) {
+    const levelIndex = getMasteryLevelIndex(mastery.level);
+    goldBonus += levelIndex * 5;
+    expBonus += levelIndex * 10;
+    manaBonus += levelIndex * 3;
+  }
+
+  return { gold: goldBonus, exp: expBonus, mana: manaBonus };
+}
+
+export function calculateClassSettlementBonus(student: Student): { gold: number; exp: number; mana: number } {
+  const classDef = CLASS_DEFS[student.class];
+  if (!classDef) return { gold: 0, exp: 0, mana: 0 };
+
+  const tierMultiplier: Record<string, number> = {
+    basic: 1,
+    advanced: 2,
+    elite: 4,
+    legendary: 8,
+  };
+
+  const mult = tierMultiplier[classDef.tier] || 1;
+  const classLevel = student.classLevel;
+
+  return {
+    gold: 20 * mult * classLevel,
+    exp: 50 * mult * classLevel,
+    mana: 10 * mult * classLevel,
+  };
+}
+
+export function createStudentWithMasteryAndClass(): Student {
+  const baseStudent = generateStudent();
+  return {
+    ...baseStudent,
+    class: 'novice',
+    classTier: 'basic',
+    masteries: [],
+    promotionHistory: [],
+    classExp: 0,
+    classLevel: 1,
+    availableForPromotion: false,
+  };
+}
+
+export function generateStudentForPoolWithClass(poolId: PoolType, pityCounter: PityCounter): { student: Student; isPity: boolean; isRateUp: boolean } {
+  const result = generateStudentForPool(poolId, pityCounter);
+  const studentWithClass: Student = {
+    ...result.student,
+    class: 'novice',
+    classTier: 'basic',
+    masteries: [],
+    promotionHistory: [],
+    classExp: 0,
+    classLevel: 1,
+    availableForPromotion: false,
+  };
+  return { ...result, student: studentWithClass };
 }

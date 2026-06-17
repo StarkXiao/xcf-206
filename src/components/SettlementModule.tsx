@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useGame } from '../context/GameContext';
-import { BUILDING_DEFS, FATIGUE_CONFIG, ACTIVITY_NAMES } from '../data/gameData';
+import { BUILDING_DEFS, FATIGUE_CONFIG, ACTIVITY_NAMES, MASTERY_CONFIG, CLASS_DEFS, CLASS_TIER_COLORS } from '../data/gameData';
 import { calculateTotalDailyOutput, calculateBuildingDailyOutput, formatNumber, calculateDailyFatigueRecovery } from '../utils/gameUtils';
 
 interface Props {}
 
 export function SettlementModule({}: Props) {
-  const { state, dispatch, saveGame } = useGame();
+  const { state, dispatch, saveGame, calculateMasterySettlementBonus, calculateClassSettlementBonus } = useGame();
   const [showDetails, setShowDetails] = useState(false);
   const [settled, setSettled] = useState<number | null>(null);
 
@@ -16,10 +16,37 @@ export function SettlementModule({}: Props) {
     gold: studentCount * 10,
     mana: Math.floor(studentCount * 5),
   };
+
+  const masteryBonus = useMemo(() => {
+    let totalGold = 0;
+    let totalExp = 0;
+    let totalMana = 0;
+    for (const student of state.students) {
+      const bonus = calculateMasterySettlementBonus(student);
+      totalGold += bonus.gold;
+      totalExp += bonus.exp;
+      totalMana += bonus.mana;
+    }
+    return { gold: totalGold, exp: totalExp, mana: totalMana };
+  }, [state.students, calculateMasterySettlementBonus]);
+
+  const classBonus = useMemo(() => {
+    let totalGold = 0;
+    let totalExp = 0;
+    let totalMana = 0;
+    for (const student of state.students) {
+      const bonus = calculateClassSettlementBonus(student);
+      totalGold += bonus.gold;
+      totalExp += bonus.exp;
+      totalMana += bonus.mana;
+    }
+    return { gold: totalGold, exp: totalExp, mana: totalMana };
+  }, [state.students, calculateClassSettlementBonus]);
+
   const netOutput = {
-    gold: dailyOutput.gold - dailyUpkeep.gold,
-    mana: dailyOutput.mana - dailyUpkeep.mana,
-    exp: dailyOutput.exp,
+    gold: dailyOutput.gold - dailyUpkeep.gold + masteryBonus.gold + classBonus.gold,
+    mana: dailyOutput.mana - dailyUpkeep.mana + masteryBonus.mana + classBonus.mana,
+    exp: dailyOutput.exp + masteryBonus.exp + classBonus.exp,
     crystals: dailyOutput.crystals,
     materials: dailyOutput.materials,
   };
@@ -146,6 +173,50 @@ export function SettlementModule({}: Props) {
                 <div className="text-cyan-400 font-bold">💎 -{formatNumber(dailyUpkeep.mana)}</div>
               </div>
             </div>
+
+            {(masteryBonus.gold > 0 || masteryBonus.exp > 0 || masteryBonus.mana > 0) && (
+              <div className="flex items-center justify-between p-4 bg-slate-900/60 rounded-xl border border-purple-600/50">
+                <div>
+                  <div className="text-purple-400 text-sm">⭐ 专精加成</div>
+                  <div className="text-white font-bold">
+                    学员课程专精等级奖励
+                  </div>
+                </div>
+                <div className="text-right">
+                  {masteryBonus.gold > 0 && (
+                    <div className="text-yellow-400 font-bold">💰 +{formatNumber(masteryBonus.gold)}</div>
+                  )}
+                  {masteryBonus.mana > 0 && (
+                    <div className="text-blue-400 font-bold">💎 +{formatNumber(masteryBonus.mana)}</div>
+                  )}
+                  {masteryBonus.exp > 0 && (
+                    <div className="text-green-400 font-bold">⭐ +{formatNumber(masteryBonus.exp)}</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {(classBonus.gold > 0 || classBonus.exp > 0 || classBonus.mana > 0) && (
+              <div className="flex items-center justify-between p-4 bg-slate-900/60 rounded-xl border border-orange-600/50">
+                <div>
+                  <div className="text-orange-400 text-sm">🏆 职业加成</div>
+                  <div className="text-white font-bold">
+                    学员职业等级奖励
+                  </div>
+                </div>
+                <div className="text-right">
+                  {classBonus.gold > 0 && (
+                    <div className="text-yellow-400 font-bold">💰 +{formatNumber(classBonus.gold)}</div>
+                  )}
+                  {classBonus.mana > 0 && (
+                    <div className="text-blue-400 font-bold">💎 +{formatNumber(classBonus.mana)}</div>
+                  )}
+                  {classBonus.exp > 0 && (
+                    <div className="text-green-400 font-bold">⭐ +{formatNumber(classBonus.exp)}</div>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-between p-4 bg-slate-900/60 rounded-xl border border-slate-600">
               <div>

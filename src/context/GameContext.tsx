@@ -1,7 +1,17 @@
 import { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react';
-import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus, PoolType, RecruitHistoryEntry, RecruitStats, PityCounter, Rarity, LimitedPoolEndTimes, Equipment, Potion, MaterialType, CraftingJob, Recipe, EquipmentSlot, DungeonDifficulty } from '../types/game';
-import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG, TIME_CONFIG, RECRUIT_POOL_DEFS, INITIAL_MATERIALS, EQUIPMENT_DEFS, POTION_DEFS, RECIPES, BASE_STUDENT_STATS } from '../data/gameData';
-import { levelUpStudent, generateId, getEfficiencyMultiplier, formatGameTime, createInitialPityCounters, createInitialRecruitStats, updatePityCounter, calculateStudentStats, generateDungeonDrops } from '../utils/gameUtils';
+import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType, ScheduleStatus, PoolType, RecruitHistoryEntry, RecruitStats, PityCounter, Rarity, LimitedPoolEndTimes, Equipment, Potion, MaterialType, CraftingJob, Recipe, EquipmentSlot, DungeonDifficulty, StudentClass, PromotionQuest, ClassPromotion, CourseMastery, MasteryLevel, ClassDef, CourseDef } from '../types/game';
+import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG, TIME_CONFIG, RECRUIT_POOL_DEFS, INITIAL_MATERIALS, EQUIPMENT_DEFS, POTION_DEFS, RECIPES, BASE_STUDENT_STATS, CLASS_DEFS, MASTERY_CONFIG } from '../data/gameData';
+import { 
+  levelUpStudent, generateId, getEfficiencyMultiplier, formatGameTime, createInitialPityCounters, 
+  createInitialRecruitStats, updatePityCounter, calculateStudentStats, generateDungeonDrops, 
+  addMasteryExp as utilsAddMasteryExp, generateStudentForPoolWithClass, promoteStudent as utilsPromoteStudent, 
+  addClassExp as utilsAddClassExp, calculateTotalMasteryBonuses, calculateClassBonuses, 
+  canPromoteToClass as utilsCanPromoteToClass, getStudentMastery as utilsGetStudentMastery, 
+  masteryLevelMeetsRequirement, createStudentWithMasteryAndClass, getAvailablePromotions as utilsGetAvailablePromotions, 
+  calculateMasterySettlementBonus as utilsCalculateMasterySettlementBonus, 
+  calculateClassSettlementBonus as utilsCalculateClassSettlementBonus, 
+  canAccessCourse as utilsCanAccessCourse, getMasteryLevelIndex 
+} from '../utils/gameUtils';
 
 type GameAction =
   | { type: 'ADD_RESOURCES'; resources: Partial<Resources> }
@@ -50,7 +60,15 @@ type GameAction =
   | { type: 'UPDATE_CRAFTING_JOBS' }
   | { type: 'EXPIRE_POTIONS' }
   | { type: 'ADD_MULTIPLE_EQUIPMENT'; equipment: Equipment[] }
-  | { type: 'ADD_MULTIPLE_POTIONS'; potions: Potion[] };
+  | { type: 'ADD_MULTIPLE_POTIONS'; potions: Potion[] }
+  | { type: 'ADD_MASTERY_EXP'; studentId: string; courseType: CourseType; exp: number }
+  | { type: 'PROMOTE_STUDENT'; studentId: string; targetClass: StudentClass }
+  | { type: 'ADD_CLASS_EXP'; studentId: string; exp: number }
+  | { type: 'START_PROMOTION_QUEST'; quest: PromotionQuest }
+  | { type: 'COMPLETE_PROMOTION_QUEST'; questId: string; studentId: string; targetClass: StudentClass }
+  | { type: 'UPDATE_PROMOTION_QUEST'; questId: string; stepId: string; current: number }
+  | { type: 'UPDATE_STUDENT_MASTERY'; studentId: string; mastery: CourseMastery }
+  | { type: 'CHECK_PROMOTION_AVAILABILITY'; studentId: string };
 
 const STORAGE_KEY = 'magic_academy_save';
 
@@ -112,6 +130,9 @@ function createInitialState(): GameState {
     potions: [],
     materials: { ...INITIAL_MATERIALS },
     craftingJobs: [],
+    promotionQuests: [],
+    totalPromotions: 0,
+    totalMasteryGrandmasters: 0,
   };
 }
 
@@ -786,6 +807,194 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case 'ADD_MASTERY_EXP': {
+      const student = state.students.find((s) => s.id === action.studentId);
+      if (!student) return state;
+
+      const { student: updatedStudent, leveledUp, newLevel } = utilsAddMasteryExp(
+        student,
+        action.courseType,
+        action.exp
+      );
+
+      const newStats = calculateStudentStats(updatedStudent, state.equipment, state.potions);
+      const finalStudent = { ...updatedStudent, stats: newStats };
+
+      let grandmasterCount = state.totalMasteryGrandmasters;
+      if (leveledUp && newLevel === 'grandmaster') {
+        grandmasterCount += 1;
+      }
+
+      return {
+        ...state,
+        students: state.students.map((s) =>
+          s.id === action.studentId ? finalStudent : s
+        ),
+        totalMasteryGrandmasters: grandmasterCount,
+      };
+    }
+
+    case 'PROMOTE_STUDENT': {
+      const student = state.students.find((s) => s.id === action.studentId);
+      if (!student) return state;
+
+      const { canPromote } = utilsCanPromoteToClass(student, action.targetClass);
+      if (!canPromote) return state;
+
+      const targetClassDef = CLASS_DEFS[action.targetClass];
+      if (!targetClassDef) return state;
+
+      if (
+        state.resources.gold < targetClassDef.goldCost ||
+        state.resources.crystals < targetClassDef.crystalsCost
+      ) {
+        return state;
+      }
+
+      const updatedStudent = utilsPromoteStudent(student, action.targetClass);
+      const newStats = calculateStudentStats(updatedStudent, state.equipment, state.potions);
+      const finalStudent = { ...updatedStudent, stats: newStats };
+
+      return {
+        ...state,
+        students: state.students.map((s) =>
+          s.id === action.studentId ? finalStudent : s
+        ),
+        resources: {
+          ...state.resources,
+          gold: state.resources.gold - targetClassDef.goldCost,
+          crystals: state.resources.crystals - targetClassDef.crystalsCost,
+        },
+        totalPromotions: state.totalPromotions + 1,
+        promotionQuests: state.promotionQuests.filter(
+          (q) => q.studentId !== action.studentId
+        ),
+      };
+    }
+
+    case 'ADD_CLASS_EXP': {
+      const student = state.students.find((s) => s.id === action.studentId);
+      if (!student) return state;
+
+      const updatedStudent = utilsAddClassExp(student, action.exp);
+      const newStats = calculateStudentStats(updatedStudent, state.equipment, state.potions);
+      const finalStudent = { ...updatedStudent, stats: newStats };
+
+      return {
+        ...state,
+        students: state.students.map((s) =>
+          s.id === action.studentId ? finalStudent : s
+        ),
+      };
+    }
+
+    case 'START_PROMOTION_QUEST': {
+      const existingQuest = state.promotionQuests.find(
+        (q) => q.studentId === action.quest.studentId
+      );
+      if (existingQuest) return state;
+
+      return {
+        ...state,
+        promotionQuests: [...state.promotionQuests, action.quest],
+        students: state.students.map((s) =>
+          s.id === action.quest.studentId
+            ? { ...s, status: 'promoting', currentPromotionTarget: action.quest.targetClass }
+            : s
+        ),
+      };
+    }
+
+    case 'UPDATE_PROMOTION_QUEST': {
+      return {
+        ...state,
+        promotionQuests: state.promotionQuests.map((q) =>
+          q.id === action.questId
+            ? {
+                ...q,
+                steps: q.steps.map((s) =>
+                  s.id === action.stepId
+                    ? {
+                        ...s,
+                        current: Math.min(s.target, action.current),
+                        completed: action.current >= s.target,
+                      }
+                    : s
+                ),
+              }
+            : q
+        ),
+      };
+    }
+
+    case 'COMPLETE_PROMOTION_QUEST': {
+      const quest = state.promotionQuests.find((q) => q.id === action.questId);
+      if (!quest) return state;
+
+      const student = state.students.find((s) => s.id === action.studentId);
+      if (!student) return state;
+
+      const targetClassDef = CLASS_DEFS[action.targetClass];
+      if (!targetClassDef) return state;
+
+      if (
+        state.resources.gold < targetClassDef.goldCost ||
+        state.resources.crystals < targetClassDef.crystalsCost
+      ) {
+        return state;
+      }
+
+      const updatedStudent = utilsPromoteStudent(student, action.targetClass);
+      const newStats = calculateStudentStats(updatedStudent, state.equipment, state.potions);
+      const finalStudent = { ...updatedStudent, stats: newStats };
+
+      return {
+        ...state,
+        students: state.students.map((s) =>
+          s.id === action.studentId ? finalStudent : s
+        ),
+        resources: {
+          ...state.resources,
+          gold: state.resources.gold - targetClassDef.goldCost,
+          crystals: state.resources.crystals - targetClassDef.crystalsCost,
+        },
+        totalPromotions: state.totalPromotions + 1,
+        promotionQuests: state.promotionQuests.map((q) =>
+          q.id === action.questId ? { ...q, completedAt: Date.now() } : q
+        ),
+      };
+    }
+
+    case 'UPDATE_STUDENT_MASTERY': {
+      return {
+        ...state,
+        students: state.students.map((s) => {
+          if (s.id !== action.studentId) return s;
+          const otherMasteries = s.masteries.filter(
+            (m) => m.courseType !== action.mastery.courseType
+          );
+          return {
+            ...s,
+            masteries: [...otherMasteries, action.mastery],
+          };
+        }),
+      };
+    }
+
+    case 'CHECK_PROMOTION_AVAILABILITY': {
+      return {
+        ...state,
+        students: state.students.map((s) => {
+          if (s.id !== action.studentId) return s;
+          const availablePromotions = utilsGetAvailablePromotions(s);
+          const canPromote = availablePromotions.some(
+            (classDef) => utilsCanPromoteToClass(s, classDef.id).canPromote
+          );
+          return { ...s, availableForPromotion: canPromote };
+        }),
+      };
+    }
+
     default:
       return state;
   }
@@ -827,6 +1036,16 @@ interface GameContextType {
   addEquipment: (equipment: Equipment) => void;
   addPotion: (potion: Potion) => void;
   addMaterials: (materials: Partial<Record<MaterialType, number>>) => void;
+  addMasteryExp: (studentId: string, courseType: CourseType, exp: number) => void;
+  promoteStudent: (studentId: string, targetClass: StudentClass) => void;
+  addClassExp: (studentId: string, exp: number) => void;
+  canPromoteToClass: (studentId: string, targetClass: StudentClass) => { canPromote: boolean; reasons: string[] };
+  getAvailablePromotions: (studentId: string) => ClassDef[];
+  getStudentMastery: (studentId: string, courseType: CourseType) => CourseMastery;
+  checkPromotionAvailability: (studentId: string) => void;
+  calculateMasterySettlementBonus: (student: Student) => { gold: number; exp: number; mana: number };
+  calculateClassSettlementBonus: (student: Student) => { gold: number; exp: number; mana: number };
+  canAccessCourse: (student: Student, courseDef: CourseDef) => { canAccess: boolean; reasons: string[] };
 }
 
 const GameContext = createContext<GameContextType | null>(null);
@@ -844,6 +1063,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
         baseStats: s.baseStats || s.stats || { ...BASE_STUDENT_STATS },
         equipment: s.equipment || { weapon: null, armor: null, accessory: null, relic: null },
         activePotions: s.activePotions || [],
+        class: s.class || 'novice',
+        classTier: s.classTier || 'basic',
+        masteries: s.masteries || [],
+        promotionHistory: s.promotionHistory || [],
+        classExp: s.classExp || 0,
+        classLevel: s.classLevel || 1,
+        availableForPromotion: s.availableForPromotion || false,
+        currentPromotionTarget: s.currentPromotionTarget || undefined,
       })),
       schedule: savedState.schedule || {
         day: savedState.day || 1,
@@ -858,6 +1085,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
       potions: savedState.potions || [],
       materials: savedState.materials || { ...INITIAL_MATERIALS },
       craftingJobs: savedState.craftingJobs || [],
+      promotionQuests: savedState.promotionQuests || [],
+      totalPromotions: savedState.totalPromotions || 0,
+      totalMasteryGrandmasters: savedState.totalMasteryGrandmasters || 0,
     };
     if (migrated.schedule.autoExecute === undefined) {
       migrated.schedule.autoExecute = true;
@@ -922,8 +1152,26 @@ export function GameProvider({ children }: { children: ReactNode }) {
       };
       updatedStudent = levelUpStudent(updatedStudent, currentState.equipment, currentState.potions);
 
-      dispatch({ type: 'UPDATE_STUDENT', student: updatedStudent });
+      const masteryExp = Math.floor(def.masteryExpPerComplete * efficiencyMult);
+      const { student: studentWithMastery, leveledUp, newLevel } = utilsAddMasteryExp(
+        updatedStudent,
+        course.courseType,
+        masteryExp
+      );
+
+      const classExp = Math.floor(totalExp * 0.3);
+      const studentWithClass = utilsAddClassExp(studentWithMastery, classExp);
+
+      const finalStats = calculateStudentStats(studentWithClass, currentState.equipment, currentState.potions);
+      const finalStudent = { ...studentWithClass, stats: finalStats };
+
+      dispatch({ type: 'UPDATE_STUDENT', student: finalStudent });
       dispatch({ type: 'UPDATE_ACADEMY_EXP', exp: Math.floor(totalExp / 5) });
+
+      if (leveledUp) {
+        dispatch({ type: 'CHECK_PROMOTION_AVAILABILITY', studentId });
+      }
+
       completedStudentIds.push(studentId);
     }
 
@@ -1425,6 +1673,52 @@ export function GameProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'ADD_MATERIALS', materials });
   };
 
+  const addMasteryExp = (studentId: string, courseType: CourseType, exp: number) => {
+    dispatch({ type: 'ADD_MASTERY_EXP', studentId, courseType, exp });
+  };
+
+  const promoteStudent = (studentId: string, targetClass: StudentClass) => {
+    dispatch({ type: 'PROMOTE_STUDENT', studentId, targetClass });
+  };
+
+  const addClassExp = (studentId: string, exp: number) => {
+    dispatch({ type: 'ADD_CLASS_EXP', studentId, exp });
+  };
+
+  const getStudentMastery = (studentId: string, courseType: CourseType): CourseMastery => {
+    const student = state.students.find(s => s.id === studentId);
+    if (!student) return utilsGetStudentMastery({ id: '', masteries: [] } as unknown as Student, courseType);
+    return utilsGetStudentMastery(student, courseType);
+  };
+
+  const checkPromotionAvailability = (studentId: string) => {
+    dispatch({ type: 'CHECK_PROMOTION_AVAILABILITY', studentId });
+  };
+
+  const calculateMasterySettlementBonus = (student: Student) => {
+    return utilsCalculateMasterySettlementBonus(student);
+  };
+
+  const calculateClassSettlementBonus = (student: Student) => {
+    return utilsCalculateClassSettlementBonus(student);
+  };
+
+  const canAccessCourse = (student: Student, courseDef: CourseDef) => {
+    return utilsCanAccessCourse(student, courseDef, state.academyLevel);
+  };
+
+  const canPromoteToClass = (studentId: string, targetClass: StudentClass) => {
+    const student = state.students.find(s => s.id === studentId);
+    if (!student) return { canPromote: false, reasons: ['学员不存在'] };
+    return utilsCanPromoteToClass(student, targetClass);
+  };
+
+  const getAvailablePromotions = (studentId: string): ClassDef[] => {
+    const student = state.students.find(s => s.id === studentId);
+    if (!student) return [];
+    return utilsGetAvailablePromotions(student);
+  };
+
   useEffect(() => {
     const interval = setInterval(() => {
       dispatch({ type: 'UPDATE_CRAFTING_JOBS' });
@@ -1469,6 +1763,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
     addEquipment,
     addPotion,
     addMaterials,
+    addMasteryExp,
+    promoteStudent,
+    addClassExp,
+    canPromoteToClass,
+    getAvailablePromotions,
+    getStudentMastery,
+    checkPromotionAvailability,
+    calculateMasterySettlementBonus,
+    calculateClassSettlementBonus,
+    canAccessCourse,
   };
 
   return <GameContext.Provider value={contextValue}>{children}</GameContext.Provider>;

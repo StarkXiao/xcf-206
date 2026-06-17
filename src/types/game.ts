@@ -18,7 +18,28 @@ export type CourseType =
   | 'combat_training'
   | 'alchemy'
   | 'spells'
-  | 'history';
+  | 'history'
+  | 'advanced_elemental'
+  | 'battle_magic'
+  | 'alchemy_mastery'
+  | 'forbidden_spells'
+  | 'tactical_command';
+
+export type MasteryLevel = 'novice' | 'apprentice' | 'adept' | 'expert' | 'master' | 'grandmaster';
+
+export type StudentClass = 
+  | 'novice'
+  | 'warrior'
+  | 'mage'
+  | 'archer'
+  | 'cleric'
+  | 'assassin'
+  | 'paladin'
+  | 'warlock'
+  | 'ranger'
+  | 'sage';
+
+export type ClassTier = 'basic' | 'advanced' | 'elite' | 'legendary';
 
 export type DungeonDifficulty = 'easy' | 'normal' | 'hard' | 'nightmare';
 
@@ -81,7 +102,7 @@ export interface Student {
   baseStats: StudentStats;
   skills: string[];
   avatar: string;
-  status: 'idle' | 'studying' | 'training' | 'dungeon' | 'resting';
+  status: 'idle' | 'studying' | 'training' | 'dungeon' | 'resting' | 'mastering' | 'promoting';
   currentCourseId?: string;
   studyProgress: number;
   morale: number;
@@ -89,6 +110,48 @@ export interface Student {
   maxFatigue: number;
   equipment: Record<EquipmentSlot, string | null>;
   activePotions: string[];
+  class: StudentClass;
+  classTier: ClassTier;
+  masteries: CourseMastery[];
+  promotionHistory: ClassPromotion[];
+  classExp: number;
+  classLevel: number;
+  availableForPromotion: boolean;
+  currentPromotionTarget?: StudentClass;
+}
+
+export interface CourseMastery {
+  courseType: CourseType;
+  level: MasteryLevel;
+  exp: number;
+  expToNext: number;
+  totalCompleted: number;
+  bonuses: Partial<StudentStats>;
+}
+
+export interface ClassDef {
+  id: StudentClass;
+  name: string;
+  description: string;
+  icon: string;
+  tier: ClassTier;
+  requiredLevel: number;
+  requiredMasteries: { courseType: CourseType; level: MasteryLevel }[];
+  requiredStats: Partial<StudentStats>;
+  statGrowth: Partial<StudentStats>;
+  elementBonus?: ElementType;
+  skills: string[];
+  unlocksClasses?: StudentClass[];
+  goldCost: number;
+  crystalsCost: number;
+}
+
+export interface ClassPromotion {
+  fromClass: StudentClass;
+  toClass: StudentClass;
+  completedAt: number;
+  questRequired?: boolean;
+  questCompleted?: boolean;
 }
 
 export interface CourseDef {
@@ -103,6 +166,13 @@ export interface CourseDef {
   requiredLevel: number;
   goldCost: number;
   manaCost: number;
+  masteryExpPerComplete: number;
+  unlockRequirements?: {
+    requiredMasteries?: { courseType: CourseType; level: MasteryLevel }[];
+    requiredClass?: StudentClass;
+    requiredAcademyLevel?: number;
+  };
+  isAdvanced?: boolean;
 }
 
 export interface Course {
@@ -182,6 +252,29 @@ export interface GameSettings {
   animationSpeed: number;
 }
 
+export interface MasteryConfig {
+  expPerLevel: number[];
+  statBonuses: Record<MasteryLevel, Partial<StudentStats>>;
+  names: Record<MasteryLevel, string>;
+  colors: Record<MasteryLevel, string>;
+}
+
+export interface PromotionQuest {
+  id: string;
+  studentId: string;
+  targetClass: StudentClass;
+  steps: {
+    id: string;
+    description: string;
+    type: 'course' | 'dungeon' | 'stat' | 'item';
+    target: number;
+    current: number;
+    completed: boolean;
+  }[];
+  startedAt: number;
+  completedAt?: number;
+}
+
 export interface GameState {
   resources: Resources;
   buildings: Building[];
@@ -206,6 +299,9 @@ export interface GameState {
   potions: Potion[];
   materials: Record<MaterialType, number>;
   craftingJobs: CraftingJob[];
+  promotionQuests: PromotionQuest[];
+  totalPromotions: number;
+  totalMasteryGrandmasters: number;
 }
 
 export type ActivityType = 

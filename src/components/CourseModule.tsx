@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useGame } from '../context/GameContext';
-import { COURSE_DEFS, RARITY_COLORS, ELEMENT_ICONS, ELEMENT_NAMES, ELEMENT_COLORS } from '../data/gameData';
-import { Course, CourseType } from '../types/game';
-import { formatTime, generateId, getFatigueLevel, getFatigueLevelColor, calculateStudyFatigueCost } from '../utils/gameUtils';
+import { COURSE_DEFS, RARITY_COLORS, ELEMENT_ICONS, ELEMENT_NAMES, ELEMENT_COLORS, MASTERY_CONFIG } from '../data/gameData';
+import { Course, CourseType, Student } from '../types/game';
+import { formatTime, generateId, getFatigueLevel, getFatigueLevelColor, calculateStudyFatigueCost, getStudentMastery, getMasteryLevelIndex } from '../utils/gameUtils';
 
 interface Props {}
 
 export function CourseModule({}: Props) {
-  const { state, dispatch, canAfford } = useGame();
+  const { state, dispatch, canAfford, canAccessCourse, getStudentMastery } = useGame();
   const [selectedCourseType, setSelectedCourseType] = useState<CourseType | null>(null);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [notification, setNotification] = useState<string | null>(null);
@@ -60,6 +60,21 @@ export function CourseModule({}: Props) {
     });
     if (!minLevelOk) {
       showNotification(`⚠️ 部分学员等级不足（需要 Lv.${def.requiredLevel}）`);
+      return;
+    }
+
+    const courseAccessOk = selectedStudents.every((id) => {
+      const s = state.students.find((st) => st.id === id);
+      if (!s) return false;
+      const { canAccess } = canAccessCourse(s, def);
+      return canAccess;
+    });
+    if (!courseAccessOk) {
+      const firstStudent = state.students.find((st) => st.id === selectedStudents[0]);
+      if (firstStudent) {
+        const { reasons } = canAccessCourse(firstStudent, def);
+        showNotification(`⚠️ 部分学员无法选修此课程：${reasons[0] || '条件不足'}`);
+      }
       return;
     }
 
@@ -197,15 +212,17 @@ export function CourseModule({}: Props) {
             {Object.values(COURSE_DEFS).map((def) => {
               const isSelected = selectedCourseType === def.id;
               const levelOk = idleStudents.some((s) => s.level >= def.requiredLevel);
+              const accessOk = idleStudents.some((s) => canAccessCourse(s, def).canAccess);
+              const canEnroll = levelOk && accessOk;
               return (
                 <button
                   key={def.id}
                   onClick={() => setSelectedCourseType(def.id)}
-                  disabled={!levelOk}
+                  disabled={!canEnroll}
                   className={`p-3 rounded-lg border-2 transition-all text-left ${
                     isSelected
                       ? 'border-yellow-400 bg-yellow-900/30'
-                      : levelOk
+                      : canEnroll
                       ? 'border-slate-600 bg-slate-800/50 hover:border-purple-400'
                       : 'border-slate-700 bg-slate-800/20 opacity-50 cursor-not-allowed'
                   }`}
@@ -214,6 +231,11 @@ export function CourseModule({}: Props) {
                   <div className="font-bold text-white text-sm truncate">{def.name}</div>
                   <div className="text-xs text-gray-400 mt-1">Lv.{def.requiredLevel}+</div>
                   <div className="text-xs text-yellow-400 mt-1">💰{def.goldCost} 💎{def.manaCost}</div>
+                  {def.unlockRequirements?.requiredMasteries && def.unlockRequirements.requiredMasteries.length > 0 && (
+                    <div className="text-xs text-cyan-400 mt-1">
+                      🔒 需要{MASTERY_CONFIG.names[def.unlockRequirements.requiredMasteries[0].level]} {COURSE_DEFS[def.unlockRequirements.requiredMasteries[0].courseType]?.name}
+                    </div>
+                  )}
                 </button>
               );
             })}
@@ -230,6 +252,7 @@ export function CourseModule({}: Props) {
                 <div className="flex flex-wrap gap-2 mt-2 text-xs">
                   <span className="text-blue-400">⏱️ {formatTime(COURSE_DEFS[selectedCourseType].duration)}</span>
                   <span className="text-green-400">📈 经验 +{COURSE_DEFS[selectedCourseType].baseExp}</span>
+                  <span className="text-purple-400">⭐ 专精经验 +{COURSE_DEFS[selectedCourseType].masteryExpPerComplete}</span>
                   <span className="text-orange-400">
                     😓 疲劳 +{calculateStudyFatigueCost(COURSE_DEFS[selectedCourseType].duration)}
                   </span>
@@ -239,6 +262,11 @@ export function CourseModule({}: Props) {
                     </span>
                   ))}
                 </div>
+                {COURSE_DEFS[selectedCourseType].unlockRequirements?.requiredMasteries && COURSE_DEFS[selectedCourseType].unlockRequirements!.requiredMasteries!.length > 0 && (
+                  <div className="mt-2 text-xs text-yellow-400">
+                    🔒 解锁条件: {MASTERY_CONFIG.names[COURSE_DEFS[selectedCourseType].unlockRequirements!.requiredMasteries![0].level]} {COURSE_DEFS[COURSE_DEFS[selectedCourseType].unlockRequirements!.requiredMasteries![0].courseType]?.name}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -267,7 +295,9 @@ export function CourseModule({}: Props) {
                 const isSelected = selectedStudents.includes(student.id);
                 const def = selectedCourseType ? COURSE_DEFS[selectedCourseType] : null;
                 const levelOk = !def || student.level >= def.requiredLevel;
-                const disabled = !levelOk;
+                const accessResult = def ? canAccessCourse(student, def) : { canAccess: true, reasons: [] };
+                const disabled = !levelOk || !accessResult.canAccess;
+                const currentMastery = selectedCourseType ? getStudentMastery(student.id, selectedCourseType) : null;
                 return (
                   <button
                     key={student.id}
@@ -289,6 +319,14 @@ export function CourseModule({}: Props) {
                           <span style={{ color: RARITY_COLORS[student.rarity] }}>Lv.{student.level}</span>
                           <span style={{ color: ELEMENT_COLORS[student.element] }}>{ELEMENT_ICONS[student.element]}</span>
                         </div>
+                        {currentMastery && getMasteryLevelIndex(currentMastery.level) > 0 && (
+                          <div 
+                            className="text-[10px] mt-0.5"
+                            style={{ color: MASTERY_CONFIG.colors[currentMastery.level] }}
+                          >
+                            ⭐ {MASTERY_CONFIG.names[currentMastery.level]} ({currentMastery.totalCompleted}次)
+                          </div>
+                        )}
                         <div className="mt-1">
                           <div className="h-1 bg-slate-700 rounded-full overflow-hidden">
                             <div
@@ -308,8 +346,11 @@ export function CourseModule({}: Props) {
                     {isSelected && (
                       <div className="text-xs text-green-400 text-center mt-1">✓ 已选</div>
                     )}
-                    {disabled && def && (
+                    {disabled && def && !levelOk && (
                       <div className="text-xs text-red-400 text-center mt-1">需Lv.{def.requiredLevel}</div>
+                    )}
+                    {disabled && def && levelOk && !accessResult.canAccess && (
+                      <div className="text-xs text-red-400 text-center mt-1">{accessResult.reasons[0] || '条件不足'}</div>
                     )}
                     {!disabled && student.fatigue > student.maxFatigue * 0.6 && (
                       <div className="text-xs text-yellow-400 text-center mt-1">⚠️ 疲劳</div>

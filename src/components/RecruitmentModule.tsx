@@ -1,8 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useGame } from '../context/GameContext';
 import { Student, PoolType, RecruitHistoryEntry, PityCounter, RecruitStats } from '../types/game';
-import { RARITY_COLORS, RARITY_NAMES, ELEMENT_COLORS, ELEMENT_NAMES, ELEMENT_ICONS, RECRUIT_POOL_DEFS, POOL_RARITY_WEIGHTS } from '../data/gameData';
-import { formatNumber, generateStudentForPool, updatePityCounter, getPoolRemainingTime, isPoolActive } from '../utils/gameUtils';
+import { RARITY_COLORS, RARITY_NAMES, ELEMENT_COLORS, ELEMENT_NAMES, ELEMENT_ICONS, RECRUIT_POOL_DEFS, POOL_RARITY_WEIGHTS, CLASS_DEFS, CLASS_TIER_NAMES, CLASS_TIER_COLORS } from '../data/gameData';
+import { formatNumber, generateStudentForPool, generateStudentForPoolWithClass, updatePityCounter, getPoolRemainingTime, isPoolActive } from '../utils/gameUtils';
 
 interface RecruitResult {
   student: Student;
@@ -77,7 +77,7 @@ export function RecruitmentModule() {
 
       for (let i = 0; i < actualCount; i++) {
         const poolCounter = updatedCounters.find((c) => c.poolId === selectedPool)!;
-        const { student, isPity, isRateUp } = generateStudentForPool(selectedPool, poolCounter);
+        const { student, isPity, isRateUp } = generateStudentForPoolWithClass(selectedPool, poolCounter);
 
         results.push({ student, isPity, isRateUp });
         dispatch({ type: 'ADD_STUDENT', student });
@@ -173,6 +173,12 @@ export function RecruitmentModule() {
                 {ELEMENT_ICONS[student.element]} {ELEMENT_NAMES[student.element]}
               </span>
               <span className="text-xs text-purple-300">Lv.{student.level}</span>
+              <span
+                className="text-xs px-1.5 py-0.5 rounded"
+                style={{ background: CLASS_TIER_COLORS[student.classTier] + '40', color: CLASS_TIER_COLORS[student.classTier] }}
+              >
+                {CLASS_DEFS[student.class]?.icon} {CLASS_DEFS[student.class]?.name}
+              </span>
             </div>
           </div>
         </div>
