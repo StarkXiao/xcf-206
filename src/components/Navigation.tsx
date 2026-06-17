@@ -16,6 +16,7 @@ const NAV_ITEMS: Array<{
   { module: 'recruitment', icon: '🎓', label: '招募', color: 'from-purple-500 to-pink-500' },
   { module: 'courses', icon: '📖', label: '课程', color: 'from-indigo-500 to-blue-500' },
   { module: 'dungeon', icon: '⚔️', label: '试炼', color: 'from-red-500 to-orange-500' },
+  { module: 'schedule', icon: '📅', label: '排班', color: 'from-cyan-500 to-teal-500' },
   { module: 'settlement', icon: '💹', label: '结算', color: 'from-green-500 to-emerald-500' },
   { module: 'settings', icon: '⚙️', label: '设置', color: 'from-slate-500 to-gray-500' },
 ];

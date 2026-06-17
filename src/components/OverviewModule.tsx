@@ -1,7 +1,7 @@
 import { useGame } from '../context/GameContext';
 import { BUILDING_DEFS, RARITY_COLORS, ELEMENT_ICONS, ELEMENT_COLORS } from '../data/gameData';
 import { AcademyMap } from './AcademyMap';
-import { calculateTotalDailyOutput, formatNumber } from '../utils/gameUtils';
+import { calculateTotalDailyOutput, formatNumber, getFatigueLevel, getFatigueLevelColor } from '../utils/gameUtils';
 import { ModuleType } from '../types/game';
 
 interface Props {
@@ -29,6 +29,8 @@ export function OverviewModule({ onNavigate }: Props) {
   const idleStudents = state.students.filter((s) => s.status === 'idle');
   const studyingStudents = state.students.filter((s) => s.status === 'studying');
   const restingStudents = state.students.filter((s) => s.status === 'resting');
+  const tiredStudents = state.students.filter((s) => s.fatigue > s.maxFatigue * 0.5);
+  const exhaustedStudents = state.students.filter((s) => s.fatigue > s.maxFatigue * 0.85);
   const expNeeded = state.academyLevel * 500;
   const expPercent = (state.academyExp / expNeeded) * 100;
 
@@ -128,6 +130,8 @@ export function OverviewModule({ onNavigate }: Props) {
                 <span className="bg-green-900/50 text-green-400 px-2 py-1 rounded">空闲 {idleStudents.length}</span>
                 <span className="bg-blue-900/50 text-blue-400 px-2 py-1 rounded">学习中 {studyingStudents.length}</span>
                 <span className="bg-orange-900/50 text-orange-400 px-2 py-1 rounded">休息中 {restingStudents.length}</span>
+                <span className="bg-yellow-900/50 text-yellow-400 px-2 py-1 rounded">疲劳 {tiredStudents.length}</span>
+                <span className="bg-red-900/50 text-red-400 px-2 py-1 rounded">精疲力竭 {exhaustedStudents.length}</span>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 max-h-64 overflow-y-auto">
                 {state.students.slice(0, 8).map((student) => (
@@ -146,7 +150,7 @@ export function OverviewModule({ onNavigate }: Props) {
                         </div>
                       </div>
                     </div>
-                    <div className="mt-1">
+                    <div className="mt-1 space-y-1">
                       <div className="h-1 bg-slate-700 rounded-full overflow-hidden">
                         <div
                           className={`h-full ${
@@ -159,9 +163,18 @@ export function OverviewModule({ onNavigate }: Props) {
                           style={{ width: `${(student.stats.hp / student.stats.maxHp) * 100}%` }}
                         />
                       </div>
-                      <div className="text-[9px] text-gray-500 mt-0.5 flex justify-between">
+                      <div className="h-1 bg-slate-700 rounded-full overflow-hidden">
+                        <div
+                          className="h-full transition-all"
+                          style={{
+                            width: `${(student.fatigue / student.maxFatigue) * 100}%`,
+                            backgroundColor: getFatigueLevelColor(getFatigueLevel(student.fatigue, student.maxFatigue)),
+                          }}
+                        />
+                      </div>
+                      <div className="text-[9px] text-gray-500 flex justify-between">
                         <span>{student.status === 'idle' ? '空闲' : student.status === 'studying' ? '学习' : '休息'}</span>
-                        <span>HP {Math.floor((student.stats.hp / student.stats.maxHp) * 100)}%</span>
+                        <span>HP {Math.floor((student.stats.hp / student.stats.maxHp) * 100)}% 💓{student.fatigue}</span>
                       </div>
                     </div>
                   </div>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useGame } from '../context/GameContext';
-import { BUILDING_DEFS } from '../data/gameData';
-import { calculateTotalDailyOutput, calculateBuildingDailyOutput, formatNumber } from '../utils/gameUtils';
+import { BUILDING_DEFS, FATIGUE_CONFIG } from '../data/gameData';
+import { calculateTotalDailyOutput, calculateBuildingDailyOutput, formatNumber, calculateDailyFatigueRecovery } from '../utils/gameUtils';
 
 interface Props {}
 
@@ -41,12 +41,16 @@ export function SettlementModule({}: Props) {
     dispatch({ type: 'NEW_DAY' });
 
     const dorm = state.buildings.find((b) => b.type === 'dormitory');
-    const healAmount = 10 + (dorm?.level || 0) * 5;
+    const dormLevel = dorm?.level || 0;
+    const healAmount = 10 + dormLevel * 5;
+    const fatigueRecovery = calculateDailyFatigueRecovery(dormLevel);
+
     for (const student of state.students) {
       const newHp = Math.min(student.stats.maxHp, student.stats.hp + healAmount);
       const newMorale = Math.min(100, student.morale + 10);
+      const newFatigue = Math.max(0, student.fatigue - fatigueRecovery);
       let newStatus = student.status;
-      if (newMorale >= 60 && newHp >= student.stats.maxHp * 0.5) {
+      if (newMorale >= 60 && newHp >= student.stats.maxHp * 0.5 && newFatigue < student.maxFatigue * 0.6) {
         newStatus = 'idle';
       }
       dispatch({
@@ -55,10 +59,16 @@ export function SettlementModule({}: Props) {
           ...student,
           stats: { ...student.stats, hp: newHp },
           morale: newMorale,
+          fatigue: newFatigue,
           status: newStatus,
         },
       });
     }
+
+    dispatch({
+      type: 'UPDATE_ACADEMY_EXP',
+      exp: state.students.length * 10,
+    });
 
     saveGame();
     setSettled(state.day);
@@ -150,6 +160,20 @@ export function SettlementModule({}: Props) {
               <div className="text-right">
                 <div className="text-red-400 font-bold">💰 -{formatNumber(dailyUpkeep.gold)}</div>
                 <div className="text-cyan-400 font-bold">💎 -{formatNumber(dailyUpkeep.mana)}</div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-slate-900/60 rounded-xl border border-slate-600">
+              <div>
+                <div className="text-gray-400 text-sm">学员状态恢复</div>
+                <div className="text-white font-bold">
+                  生命值 +{10 + (state.buildings.find((b) => b.type === 'dormitory')?.level || 0) * 5} · 士气 +10
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-green-400 font-bold">
+                  😴 疲劳 -{calculateDailyFatigueRecovery(state.buildings.find((b) => b.type === 'dormitory')?.level || 0)}
+                </div>
               </div>
             </div>
           </div>

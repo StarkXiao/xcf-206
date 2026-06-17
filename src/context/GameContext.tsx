@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react';
-import { GameState, Resources, Building, Student, Course, BuildingType, CourseType } from '../types/game';
-import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS } from '../data/gameData';
-import { levelUpStudent } from '../utils/gameUtils';
+import { GameState, Resources, Building, Student, Course, BuildingType, CourseType, ScheduleEntry, ActivityType } from '../types/game';
+import { BUILDING_DEFS, INITIAL_RESOURCES, STUDENT_CAPACITY_BASE, STUDENT_CAPACITY_PER_LEVEL, COURSE_DEFS, FATIGUE_CONFIG } from '../data/gameData';
+import { levelUpStudent, generateId } from '../utils/gameUtils';
 
 type GameAction =
   | { type: 'ADD_RESOURCES'; resources: Partial<Resources> }
@@ -21,7 +21,12 @@ type GameAction =
   | { type: 'LOAD_STATE'; state: GameState }
   | { type: 'RESET_GAME' }
   | { type: 'UPDATE_ACADEMY_EXP'; exp: number }
-  | { type: 'SAVE_NOW' };
+  | { type: 'SAVE_NOW' }
+  | { type: 'UPDATE_FATIGUE'; studentId: string; delta: number }
+  | { type: 'ADD_SCHEDULE_ENTRY'; entry: ScheduleEntry }
+  | { type: 'REMOVE_SCHEDULE_ENTRY'; entryId: string }
+  | { type: 'CLEAR_SCHEDULE' }
+  | { type: 'REST_STUDENT'; studentId: string; duration: number };
 
 const STORAGE_KEY = 'magic_academy_save';
 
@@ -61,6 +66,10 @@ function createInitialState(): GameState {
     dungeonRuns: 0,
     totalVictories: 0,
     achievements: [],
+    schedule: {
+      day: 1,
+      entries: [],
+    },
   };
 }
 
@@ -238,6 +247,62 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       return { ...state, lastSaveTime: Date.now() };
     }
 
+    case 'UPDATE_FATIGUE': {
+      return {
+        ...state,
+        students: state.students.map((s) =>
+          s.id === action.studentId
+            ? { ...s, fatigue: Math.max(0, Math.min(s.maxFatigue, s.fatigue + action.delta)) }
+            : s
+        ),
+      };
+    }
+
+    case 'ADD_SCHEDULE_ENTRY': {
+      return {
+        ...state,
+        schedule: {
+          ...state.schedule,
+          entries: [...state.schedule.entries, action.entry],
+        },
+      };
+    }
+
+    case 'REMOVE_SCHEDULE_ENTRY': {
+      return {
+        ...state,
+        schedule: {
+          ...state.schedule,
+          entries: state.schedule.entries.filter((e) => e.id !== action.entryId),
+        },
+      };
+    }
+
+    case 'CLEAR_SCHEDULE': {
+      return {
+        ...state,
+        schedule: {
+          ...state.schedule,
+          entries: [],
+        },
+      };
+    }
+
+    case 'REST_STUDENT': {
+      return {
+        ...state,
+        students: state.students.map((s) =>
+          s.id === action.studentId
+            ? {
+                ...s,
+                status: 'resting',
+                fatigue: Math.max(0, s.fatigue - Math.floor(FATIGUE_CONFIG.REST_RECOVERY_PER_MINUTE * action.duration)),
+              }
+            : s
+        ),
+      };
+    }
+
     default:
       return state;
   }
@@ -251,16 +316,43 @@ interface GameContextType {
   getStudentCapacity: () => number;
   saveGame: () => void;
   loadGame: () => boolean;
+  getFatigueLevel: (fatigue: number, maxFatigue: number) => 'energetic' | 'normal' | 'tired' | 'exhausted';
+  getEfficiencyMultiplier: (fatigue: number, maxFatigue: number, morale: number) => number;
+  updateStudentFatigue: (studentId: string, delta: number) => void;
+  addScheduleEntry: (entry: Omit<ScheduleEntry, 'id'>) => void;
+  removeScheduleEntry: (entryId: string) => void;
+  clearSchedule: () => void;
+  restStudent: (studentId: string, duration: number) => void;
+  migrateSaveData: (savedState: any) => GameState;
 }
 
 const GameContext = createContext<GameContextType | null>(null);
 
 export function GameProvider({ children }: { children: ReactNode }) {
+  const migrateSaveData = (savedState: any): GameState => {
+    const initial = createInitialState();
+    const migrated: GameState = {
+      ...initial,
+      ...savedState,
+      students: (savedState.students || []).map((s: any) => ({
+        ...s,
+        fatigue: s.fatigue ?? 0,
+        maxFatigue: s.maxFatigue ?? FATIGUE_CONFIG.BASE_MAX_FATIGUE + (s.level || 1) * FATIGUE_CONFIG.LEVEL_BONUS,
+      })),
+      schedule: savedState.schedule || {
+        day: savedState.day || 1,
+        entries: [],
+      },
+    };
+    return migrated;
+  };
+
   const [state, dispatch] = useReducer(gameReducer, null, () => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
-        return JSON.parse(saved) as GameState;
+        const parsed = JSON.parse(saved);
+        return migrateSaveData(parsed);
       } catch {
         return createInitialState();
       }
@@ -286,16 +378,19 @@ export function GameProvider({ children }: { children: ReactNode }) {
       const elementBonus =
         def.elementBonus && student.element === def.elementBonus ? 1.3 : 1;
       const rarityBonus = 1 + (['legendary', 'epic', 'rare'].indexOf(student.rarity) >= 0 ? 0.2 : 0);
-      const totalExp = Math.floor(def.baseExp * expBonus * elementBonus * rarityBonus);
+      const efficiencyMult = getEfficiencyMultiplier(student.fatigue, student.maxFatigue, student.morale);
+      const totalExp = Math.floor(def.baseExp * expBonus * elementBonus * rarityBonus * efficiencyMult);
 
       const boostedStats = { ...student.stats };
       for (const [stat, boost] of Object.entries(def.statBoosts)) {
         if (boostedStats[stat as keyof typeof boostedStats] !== undefined) {
-          const newValue = boostedStats[stat as keyof typeof boostedStats] + Math.floor((boost as number) * elementBonus);
+          const newValue = boostedStats[stat as keyof typeof boostedStats] + Math.floor((boost as number) * elementBonus * efficiencyMult);
           (boostedStats as Record<string, number>)[stat] = newValue;
         }
       }
       boostedStats.hp = boostedStats.maxHp;
+
+      const fatigueCost = Math.floor(def.duration * FATIGUE_CONFIG.STUDY_COST_PER_MINUTE / 60);
 
       let updatedStudent: Student = {
         ...student,
@@ -305,6 +400,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         currentCourseId: undefined,
         studyProgress: 0,
         morale: Math.max(0, student.morale - 5),
+        fatigue: Math.min(student.maxFatigue, student.fatigue + fatigueCost),
       };
       updatedStudent = levelUpStudent(updatedStudent);
 
@@ -315,6 +411,55 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
     dispatch({ type: 'REMOVE_COURSE', courseId: course.id });
     return completedStudentIds;
+  };
+
+  const getFatigueLevel = (fatigue: number, maxFatigue: number): 'energetic' | 'normal' | 'tired' | 'exhausted' => {
+    const ratio = fatigue / maxFatigue;
+    if (ratio < 0.3) return 'energetic';
+    if (ratio < 0.6) return 'normal';
+    if (ratio < 0.85) return 'tired';
+    return 'exhausted';
+  };
+
+  const getEfficiencyMultiplier = (fatigue: number, maxFatigue: number, morale: number): number => {
+    const ratio = fatigue / maxFatigue;
+    let multiplier = 1.0;
+    
+    if (ratio >= FATIGUE_CONFIG.EXHAUSTION_THRESHOLD / 100) {
+      multiplier *= FATIGUE_CONFIG.EXHAUSTION_PENALTY_MULTIPLIER;
+    } else if (ratio >= FATIGUE_CONFIG.FATIGUE_PENALTY_THRESHOLD / 100) {
+      multiplier *= FATIGUE_CONFIG.FATIGUE_PENALTY_MULTIPLIER;
+    }
+    
+    if (morale >= FATIGUE_CONFIG.MORALE_BONUS_THRESHOLD) {
+      multiplier *= FATIGUE_CONFIG.MORALE_BONUS_MULTIPLIER;
+    }
+    
+    return multiplier;
+  };
+
+  const updateStudentFatigue = (studentId: string, delta: number) => {
+    dispatch({ type: 'UPDATE_FATIGUE', studentId, delta });
+  };
+
+  const addScheduleEntry = (entry: Omit<ScheduleEntry, 'id'>) => {
+    const newEntry: ScheduleEntry = {
+      ...entry,
+      id: generateId(),
+    };
+    dispatch({ type: 'ADD_SCHEDULE_ENTRY', entry: newEntry });
+  };
+
+  const removeScheduleEntry = (entryId: string) => {
+    dispatch({ type: 'REMOVE_SCHEDULE_ENTRY', entryId });
+  };
+
+  const clearSchedule = () => {
+    dispatch({ type: 'CLEAR_SCHEDULE' });
+  };
+
+  const restStudent = (studentId: string, duration: number) => {
+    dispatch({ type: 'REST_STUDENT', studentId, duration });
   };
 
   useEffect(() => {
@@ -365,7 +510,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
-        const loadedState = JSON.parse(saved) as GameState;
+        const parsed = JSON.parse(saved);
+        const loadedState = migrateSaveData(parsed);
         dispatch({ type: 'LOAD_STATE', state: loadedState });
         return true;
       } catch {
@@ -390,6 +536,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
     getStudentCapacity: () => getStudentCapacity(state.buildings),
     saveGame,
     loadGame,
+    getFatigueLevel,
+    getEfficiencyMultiplier,
+    updateStudentFatigue,
+    addScheduleEntry,
+    removeScheduleEntry,
+    clearSchedule,
+    restStudent,
+    migrateSaveData,
   };
 
   return <GameContext.Provider value={contextValue}>{children}</GameContext.Provider>;

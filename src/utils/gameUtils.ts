@@ -1,4 +1,4 @@
-import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy } from '../types/game';
+import { Rarity, ElementType, Student, StudentStats, BattleUnit, BattleLogEntry, DungeonResult, Resources, Building, Enemy, FatigueLevel, ScheduleEntry, ActivityType } from '../types/game';
 import {
   RARITY_WEIGHTS,
   RARITY_MULTIPLIERS,
@@ -9,6 +9,7 @@ import {
   BUILDING_DEFS,
   ELEMENT_NAMES,
   SKILLS,
+  FATIGUE_CONFIG,
 } from '../data/gameData';
 
 export function pickRandom<T>(arr: T[]): T {
@@ -83,6 +84,7 @@ export function generateStudent(): Student {
     const moreSkills = SKILLS.filter((s) => !skills.includes(s.name));
     if (moreSkills.length > 0) skills.push(pickRandom(moreSkills).name);
   }
+  const maxFatigue = FATIGUE_CONFIG.BASE_MAX_FATIGUE + 1 * FATIGUE_CONFIG.LEVEL_BONUS;
   return {
     id: generateId(),
     name: generateStudentName(),
@@ -96,6 +98,8 @@ export function generateStudent(): Student {
     status: 'idle',
     studyProgress: 0,
     morale: 100,
+    fatigue: 0,
+    maxFatigue,
   };
 }
 
@@ -282,4 +286,115 @@ export function formatTime(seconds: number): string {
   if (hours > 0) return `${hours}h ${minutes}m`;
   if (minutes > 0) return `${minutes}m ${secs}s`;
   return `${secs}s`;
+}
+
+export function getFatigueLevel(fatigue: number, maxFatigue: number): FatigueLevel {
+  const ratio = fatigue / maxFatigue;
+  if (ratio < 0.3) return 'energetic';
+  if (ratio < 0.6) return 'normal';
+  if (ratio < 0.85) return 'tired';
+  return 'exhausted';
+}
+
+export function getFatigueLevelName(level: FatigueLevel): string {
+  const names: Record<FatigueLevel, string> = {
+    energetic: '精力充沛',
+    normal: '状态良好',
+    tired: '疲劳',
+    exhausted: '精疲力竭',
+  };
+  return names[level];
+}
+
+export function getFatigueLevelColor(level: FatigueLevel): string {
+  const colors: Record<FatigueLevel, string> = {
+    energetic: '#10B981',
+    normal: '#3B82F6',
+    tired: '#F59E0B',
+    exhausted: '#EF4444',
+  };
+  return colors[level];
+}
+
+export function calculateMaxFatigue(level: number): number {
+  return FATIGUE_CONFIG.BASE_MAX_FATIGUE + level * FATIGUE_CONFIG.LEVEL_BONUS;
+}
+
+export function calculateStudyFatigueCost(duration: number): number {
+  return Math.floor(duration * FATIGUE_CONFIG.STUDY_COST_PER_MINUTE / 60);
+}
+
+export function calculateDungeonFatigueCost(difficulty: string): number {
+  const difficultyCosts = FATIGUE_CONFIG.DUNGEON_COST_PER_DIFFICULTY as Record<string, number>;
+  return FATIGUE_CONFIG.DUNGEON_COST_BASE + (difficultyCosts[difficulty] || 0);
+}
+
+export function calculateRestFatigueRecovery(duration: number, dormLevel: number = 1): number {
+  const baseRecovery = duration * FATIGUE_CONFIG.REST_RECOVERY_PER_MINUTE;
+  const dormBonus = 1 + dormLevel * 0.1;
+  return Math.floor(baseRecovery * dormBonus);
+}
+
+export function getEfficiencyMultiplier(fatigue: number, maxFatigue: number, morale: number): number {
+  const ratio = fatigue / maxFatigue;
+  let multiplier = 1.0;
+  
+  if (ratio >= FATIGUE_CONFIG.EXHAUSTION_THRESHOLD / 100) {
+    multiplier *= FATIGUE_CONFIG.EXHAUSTION_PENALTY_MULTIPLIER;
+  } else if (ratio >= FATIGUE_CONFIG.FATIGUE_PENALTY_THRESHOLD / 100) {
+    multiplier *= FATIGUE_CONFIG.FATIGUE_PENALTY_MULTIPLIER;
+  }
+  
+  if (morale >= FATIGUE_CONFIG.MORALE_BONUS_THRESHOLD) {
+    multiplier *= FATIGUE_CONFIG.MORALE_BONUS_MULTIPLIER;
+  }
+  
+  return multiplier;
+}
+
+export function calculateDailyFatigueRecovery(dormLevel: number): number {
+  return FATIGUE_CONFIG.DAILY_RECOVERY_BASE + dormLevel * FATIGUE_CONFIG.DORM_BONUS_PER_LEVEL;
+}
+
+export function hasSchedulingConflict(
+  entries: ScheduleEntry[],
+  studentId: string,
+  startTime: number,
+  duration: number
+): boolean {
+  const endTime = startTime + duration;
+  return entries.some(
+    (e) =>
+      e.studentId === studentId &&
+      !(e.startTime + e.duration <= startTime || e.startTime >= endTime)
+  );
+}
+
+export function getStudentScheduleEntries(
+  entries: ScheduleEntry[],
+  studentId: string
+): ScheduleEntry[] {
+  return entries.filter((e) => e.studentId === studentId);
+}
+
+export function getActivityName(activity: ActivityType): string {
+  const names: Record<ActivityType, string> = {
+    study: '学习',
+    train: '训练',
+    dungeon: '试炼',
+    rest: '休息',
+    idle: '空闲',
+  };
+  return names[activity];
+}
+
+export function getActivityIcon(activity: ActivityType): string {
+  const icons: Record<ActivityType, string> = {
+    study: '📖',
+    train: '⚔️',
+    dungeon: '🗺️',
+    rest: '😴',
+    idle: '💤',
+  };
+  return icons[activity];
 }

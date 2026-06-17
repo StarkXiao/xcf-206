@@ -355,3 +355,44 @@ export const INITIAL_RESOURCES = {
 
 export const STUDENT_CAPACITY_BASE = 5;
 export const STUDENT_CAPACITY_PER_LEVEL = 3;
+
+export const FATIGUE_CONFIG = {
+  BASE_MAX_FATIGUE: 100,
+  LEVEL_BONUS: 5,
+  STUDY_COST_PER_MINUTE: 1,
+  DUNGEON_COST_BASE: 20,
+  DUNGEON_COST_PER_DIFFICULTY: { easy: 10, normal: 20, hard: 35, nightmare: 50 },
+  REST_RECOVERY_PER_MINUTE: 2,
+  DAILY_RECOVERY_BASE: 30,
+  DORM_BONUS_PER_LEVEL: 10,
+  MORALE_BONUS_THRESHOLD: 80,
+  MORALE_BONUS_MULTIPLIER: 1.5,
+  FATIGUE_PENALTY_THRESHOLD: 50,
+  FATIGUE_PENALTY_MULTIPLIER: 0.7,
+  EXHAUSTION_THRESHOLD: 80,
+  EXHAUSTION_PENALTY_MULTIPLIER: 0.4,
+};
+
+export const ACTIVITY_NAMES: Record<string, string> = {
+  study: '学习',
+  train: '训练',
+  dungeon: '试炼',
+  rest: '休息',
+  idle: '空闲',
+};
+
+export const ACTIVITY_ICONS: Record<string, string> = {
+  study: '📖',
+  train: '⚔️',
+  dungeon: '🗺️',
+  rest: '😴',
+  idle: '💤',
+};
+
+export const ACTIVITY_COLORS: Record<string, string> = {
+  study: 'from-blue-600 to-cyan-500',
+  train: 'from-red-600 to-orange-500',
+  dungeon: 'from-purple-600 to-pink-500',
+  rest: 'from-green-600 to-emerald-500',
+  idle: 'from-gray-600 to-slate-500',
+};

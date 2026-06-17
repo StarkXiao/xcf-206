@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useGame } from '../context/GameContext';
 import { DUNGEON_DEFS, DIFFICULTY_NAMES, DIFFICULTY_COLORS, RARITY_COLORS, ELEMENT_ICONS, ELEMENT_NAMES, ELEMENT_COLORS } from '../data/gameData';
 import { Student, DungeonDef, BattleUnit, BattleLogEntry, Enemy } from '../types/game';
-import { simulateBattle, formatNumber, levelUpStudent } from '../utils/gameUtils';
+import { simulateBattle, formatNumber, levelUpStudent, getFatigueLevel, getFatigueLevelColor, calculateDungeonFatigueCost } from '../utils/gameUtils';
 
 interface Props {}
 
@@ -58,7 +58,28 @@ export function DungeonModule({}: Props) {
       return;
     }
 
+    const fatigueCost = calculateDungeonFatigueCost(selectedDungeon.difficulty);
+    const exhaustedStudents = selectedTeam.filter((id) => {
+      const s = state.students.find((st) => st.id === id);
+      return s && s.fatigue + fatigueCost > s.maxFatigue * 0.85;
+    });
+    if (exhaustedStudents.length > 0) {
+      showNotification(`⚠️ ${exhaustedStudents.length} 名学员过于疲劳，战斗力将大幅降低`);
+    }
+
+    const tiredStudents = selectedTeam.filter((id) => {
+      const s = state.students.find((st) => st.id === id);
+      return s && s.fatigue > s.maxFatigue * 0.5;
+    });
+    if (tiredStudents.length > 0 && exhaustedStudents.length === 0) {
+      showNotification(`💡 ${tiredStudents.length} 名学员状态不佳，建议先休息`);
+    }
+
     dispatch({ type: 'SPEND_RESOURCES', resources: cost });
+
+    for (const studentId of selectedTeam) {
+      dispatch({ type: 'UPDATE_FATIGUE', studentId, delta: fatigueCost });
+    }
 
     const players: Student[] = selectedTeam
       .map((id) => state.students.find((s) => s.id === id)!)
@@ -311,6 +332,9 @@ export function DungeonModule({}: Props) {
                       <span className="bg-yellow-900/50 px-2 py-0.5 rounded text-yellow-300">
                         💰 进入: {dungeon.staminaCost * 10}
                       </span>
+                      <span className="bg-orange-900/50 px-2 py-0.5 rounded text-orange-300">
+                        😓 疲劳: {calculateDungeonFatigueCost(dungeon.difficulty)}
+                      </span>
                       <span className="bg-red-900/50 px-2 py-0.5 rounded text-red-300">
                         👹 {dungeon.enemies.length}只怪物
                       </span>
@@ -398,9 +422,24 @@ export function DungeonModule({}: Props) {
                           style={{ width: `${hpPercent}%` }}
                         />
                       </div>
+                      <div className="h-1 bg-slate-700 rounded-full mt-1 overflow-hidden">
+                        <div
+                          className="h-full transition-all"
+                          style={{
+                            width: `${(student.fatigue / student.maxFatigue) * 100}%`,
+                            backgroundColor: getFatigueLevelColor(getFatigueLevel(student.fatigue, student.maxFatigue)),
+                          }}
+                        />
+                      </div>
+                      <div className="text-[8px] text-gray-500 mt-0.5">
+                        💓{student.fatigue}/{student.maxFatigue}
+                      </div>
                     </div>
                     {isSelected && <div className="text-xs text-green-400 text-center mt-1">✓ 出战</div>}
                     {!levelOk && <div className="text-xs text-red-400 text-center mt-1">Lv.{selectedDungeon.requiredLevel}+</div>}
+                    {levelOk && student.fatigue > student.maxFatigue * 0.6 && (
+                      <div className="text-xs text-yellow-400 text-center mt-1">⚠️ 疲劳</div>
+                    )}
                   </button>
                 );
               })}

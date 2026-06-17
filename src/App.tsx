@@ -7,6 +7,7 @@ import { ConstructionModule } from './components/ConstructionModule';
 import { RecruitmentModule } from './components/RecruitmentModule';
 import { CourseModule } from './components/CourseModule';
 import { DungeonModule } from './components/DungeonModule';
+import { ScheduleModule } from './components/ScheduleModule';
 import { SettlementModule } from './components/SettlementModule';
 import { SettingsModule } from './components/SettingsModule';
 import { ModuleType } from './types/game';
@@ -39,6 +40,8 @@ function GameContent() {
         return <CourseModule />;
       case 'dungeon':
         return <DungeonModule />;
+      case 'schedule':
+        return <ScheduleModule />;
       case 'settlement':
         return <SettlementModule />;
       case 'settings':

@@ -84,6 +84,8 @@ export interface Student {
   currentCourseId?: string;
   studyProgress: number;
   morale: number;
+  fatigue: number;
+  maxFatigue: number;
 }
 
 export interface CourseDef {
@@ -192,7 +194,32 @@ export interface GameState {
   dungeonRuns: number;
   totalVictories: number;
   achievements: string[];
+  schedule: DailySchedule;
 }
+
+export type ActivityType = 
+  | 'study'
+  | 'train'
+  | 'dungeon'
+  | 'rest'
+  | 'idle';
+
+export interface ScheduleEntry {
+  id: string;
+  studentId: string;
+  activity: ActivityType;
+  startTime: number;
+  duration: number;
+  courseType?: CourseType;
+  dungeonId?: string;
+}
+
+export interface DailySchedule {
+  day: number;
+  entries: ScheduleEntry[];
+}
+
+export type FatigueLevel = 'energetic' | 'normal' | 'tired' | 'exhausted';
 
 export type ModuleType = 
   | 'overview'
@@ -201,4 +228,5 @@ export type ModuleType =
   | 'courses'
   | 'dungeon'
   | 'settlement'
+  | 'schedule'
   | 'settings';

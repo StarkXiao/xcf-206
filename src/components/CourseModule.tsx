@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useGame } from '../context/GameContext';
-import { COURSE_DEFS, RARITY_COLORS, ELEMENT_ICONS, ELEMENT_NAMES } from '../data/gameData';
+import { COURSE_DEFS, RARITY_COLORS, ELEMENT_ICONS, ELEMENT_NAMES, ELEMENT_COLORS } from '../data/gameData';
 import { Course, CourseType } from '../types/game';
-import { formatTime, generateId } from '../utils/gameUtils';
+import { formatTime, generateId, getFatigueLevel, getFatigueLevelColor, calculateStudyFatigueCost } from '../utils/gameUtils';
 
 interface Props {}
 
@@ -61,6 +61,23 @@ export function CourseModule({}: Props) {
     if (!minLevelOk) {
       showNotification(`⚠️ 部分学员等级不足（需要 Lv.${def.requiredLevel}）`);
       return;
+    }
+
+    const fatigueCost = calculateStudyFatigueCost(def.duration);
+    const exhaustedStudents = selectedStudents.filter((id) => {
+      const s = state.students.find((st) => st.id === id);
+      return s && s.fatigue + fatigueCost > s.maxFatigue * 0.85;
+    });
+    if (exhaustedStudents.length > 0) {
+      showNotification(`⚠️ ${exhaustedStudents.length} 名学员过于疲劳，学习效率将大幅降低`);
+    }
+
+    const tiredStudents = selectedStudents.filter((id) => {
+      const s = state.students.find((st) => st.id === id);
+      return s && s.fatigue > s.maxFatigue * 0.5;
+    });
+    if (tiredStudents.length > 0 && exhaustedStudents.length === 0) {
+      showNotification(`💡 ${tiredStudents.length} 名学员状态不佳，建议先休息`);
     }
 
     dispatch({ type: 'SPEND_RESOURCES', resources: { gold: goldCost, mana: manaCost } });
@@ -213,6 +230,9 @@ export function CourseModule({}: Props) {
                 <div className="flex flex-wrap gap-2 mt-2 text-xs">
                   <span className="text-blue-400">⏱️ {formatTime(COURSE_DEFS[selectedCourseType].duration)}</span>
                   <span className="text-green-400">📈 经验 +{COURSE_DEFS[selectedCourseType].baseExp}</span>
+                  <span className="text-orange-400">
+                    😓 疲劳 +{calculateStudyFatigueCost(COURSE_DEFS[selectedCourseType].duration)}
+                  </span>
                   {Object.entries(COURSE_DEFS[selectedCourseType].statBoosts).map(([stat, val]) => (
                     <span key={stat} className="text-cyan-400">
                       {stat === 'maxHp' ? 'HP' : stat === 'attack' ? '攻击' : stat === 'defense' ? '防御' : stat === 'magic' ? '魔法' : stat === 'speed' ? '速度' : stat === 'critRate' ? '暴击率' : '暴击伤害'}+{val}
@@ -267,7 +287,21 @@ export function CourseModule({}: Props) {
                         <div className="text-sm font-bold text-white truncate">{student.name.split('·')[0]}</div>
                         <div className="flex items-center gap-1 text-[10px]">
                           <span style={{ color: RARITY_COLORS[student.rarity] }}>Lv.{student.level}</span>
-                          <span>{ELEMENT_ICONS[student.element]}</span>
+                          <span style={{ color: ELEMENT_COLORS[student.element] }}>{ELEMENT_ICONS[student.element]}</span>
+                        </div>
+                        <div className="mt-1">
+                          <div className="h-1 bg-slate-700 rounded-full overflow-hidden">
+                            <div
+                              className="h-full transition-all"
+                              style={{
+                                width: `${(student.fatigue / student.maxFatigue) * 100}%`,
+                                backgroundColor: getFatigueLevelColor(getFatigueLevel(student.fatigue, student.maxFatigue)),
+                              }}
+                            />
+                          </div>
+                          <div className="text-[8px] text-gray-500 mt-0.5">
+                            疲劳: {student.fatigue}/{student.maxFatigue}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -276,6 +310,9 @@ export function CourseModule({}: Props) {
                     )}
                     {disabled && def && (
                       <div className="text-xs text-red-400 text-center mt-1">需Lv.{def.requiredLevel}</div>
+                    )}
+                    {!disabled && student.fatigue > student.maxFatigue * 0.6 && (
+                      <div className="text-xs text-yellow-400 text-center mt-1">⚠️ 疲劳</div>
                     )}
                   </button>
                 );

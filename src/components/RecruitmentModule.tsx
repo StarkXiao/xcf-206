@@ -132,6 +132,11 @@ export function RecruitmentModule({}: Props) {
             <span className={student.morale >= 70 ? 'text-green-400' : student.morale >= 40 ? 'text-yellow-400' : 'text-red-400'}>
               {student.morale}%
             </span>
+            <span className="mx-1">·</span>
+            疲劳:{' '}
+            <span className="text-cyan-400">
+              {student.fatigue}/{student.maxFatigue}
+            </span>
           </div>
           <button
             onClick={() => handleDismiss(student.id)}
